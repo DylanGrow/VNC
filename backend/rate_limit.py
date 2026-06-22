@@ -31,7 +31,7 @@ class ConnectionManager:
             return False
 
         # Per-IP connection limit
-        ip_connections = len(self.active_connections[client_ip])
+        ip_connections = len(self.active_connections[client_ip]) if client_ip in self.active_connections else 0
         if ip_connections >= self.max_per_ip:
             logger.warning(f"Rejected connection from {client_ip}: Per-IP limit of {self.max_per_ip} reached")
             return False

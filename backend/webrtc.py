@@ -81,14 +81,28 @@ class WebRTCSessionManager:
             return {"status": "error", "detail": str(e)}
 
     def cleanup(self):
-        """Asynchronously closes all active peer connections."""
+        """Asynchronously closes all active peer connections and stops transceivers."""
         if not self.available:
             return
         import asyncio
         for pc in list(self.pcs):
             try:
-                coro = pc.close()
+                coro = self._close_pc(pc)
                 asyncio.create_task(coro)
             except Exception as e:
-                logger.debug(f"Failed to close WebRTC peer connection: {e}")
+                logger.debug(f"Failed to initiate WebRTC close task: {e}")
         self.pcs.clear()
+
+    async def _close_pc(self, pc) -> None:
+        """Safely stops transceivers and closes peer connection."""
+        try:
+            # Stop all transceivers to release ports and threads immediately
+            for transceiver in list(pc.getTransceivers()):
+                try:
+                    transceiver.stop()
+                except Exception:
+                    pass
+            await pc.close()
+            logger.info("WebRTC: PeerConnection cleanly destroyed.")
+        except Exception as e:
+            logger.debug(f"Error closing RTCPeerConnection: {e}")

@@ -52,10 +52,17 @@ export class InputHandler {
 
     // Cache initial boundary rectangle
     this.cachedRect = this.canvas.getBoundingClientRect();
+    let resizeFrameId: number | null = null;
     this.resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        this.cachedRect = entry.target.getBoundingClientRect();
+      if (resizeFrameId !== null) {
+        window.cancelAnimationFrame(resizeFrameId);
       }
+      resizeFrameId = window.requestAnimationFrame(() => {
+        for (const entry of entries) {
+          this.cachedRect = entry.target.getBoundingClientRect();
+        }
+        resizeFrameId = null;
+      });
     });
     this.resizeObserver.observe(this.canvas);
 
@@ -337,7 +344,12 @@ export class InputHandler {
       'Home': 'home',
       'End': 'end',
       'PageUp': 'pageup',
-      'PageDown': 'pagedown'
+      'PageDown': 'pagedown',
+      'CapsLock': 'capslock',
+      'NumLock': 'numlock',
+      'ScrollLock': 'scrolllock',
+      'Space': 'space',
+      ' ': 'space'
     };
     return map[key] || key;
   }

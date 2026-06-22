@@ -20,6 +20,8 @@ class AudioCapture:
         self.channels = channels
         self.available = audio_capture_available
         self.t = 0.0
+        self.recorder = None
+        self.recorder_context = None
         
         if not self.available:
             logger.info("soundcard library not found. Falling back to synth sine-wave audio generator.")
@@ -43,17 +45,31 @@ class AudioCapture:
             return bytes(buf)
             
         try:
-            # Try capturing desktop speakers via loopback device
-            speaker = sc.default_speaker()
-            mic = sc.get_microphone(id=speaker.id, include_loopback=True)
-            with mic.recorder(samplerate=self.sample_rate, channels=self.channels) as recorder:
-                data = recorder.record(numsamples=num_samples)
-                # Convert float32 frames [-1.0, 1.0] to 16-bit PCM bytes
-                buf = bytearray()
-                for val in data.flatten():
-                    int_val = int(max(-1.0, min(1.0, val)) * 32767)
-                    buf.extend(struct.pack("<h", int_val))
-                return bytes(buf)
+            # Re-use or open persistent recorder loopback stream
+            if self.recorder is None:
+                speaker = sc.default_speaker()
+                mic = sc.get_microphone(id=speaker.id, include_loopback=True)
+                self.recorder_context = mic.recorder(samplerate=self.sample_rate, channels=self.channels)
+                self.recorder = self.recorder_context.__enter__()
+                
+            data = self.recorder.record(numsamples=num_samples)
+            # Convert float32 frames [-1.0, 1.0] to 16-bit PCM bytes
+            buf = bytearray()
+            for val in data.flatten():
+                int_val = int(max(-1.0, min(1.0, val)) * 32767)
+                buf.extend(struct.pack("<h", int_val))
+            return bytes(buf)
         except Exception as e:
-            logger.debug(f"Native audio capture failed: {e}. Falling back to silent PCM.")
+            logger.debug(f"Native audio capture failed: {e}. Resetting recorder handle.")
+            self.cleanup()
             return b"\x00" * (num_samples * 2)
+
+    def cleanup(self):
+        """Cleanly releases the active soundcard recorder context."""
+        if self.recorder_context is not None:
+            try:
+                self.recorder_context.__exit__(None, None, None)
+            except Exception:
+                pass
+            self.recorder_context = None
+        self.recorder = None

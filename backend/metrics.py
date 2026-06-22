@@ -8,6 +8,7 @@ class MetricsCollector:
         self.total_frames = 0
         self.total_inputs = 0
         self.bytes_sent = 0
+        self.rolling_transfers = [] # List of (timestamp, size_bytes)
 
     def get_uptime(self) -> float:
         """Return the uptime of the server in seconds."""
@@ -17,6 +18,20 @@ class MetricsCollector:
         """Record a screen frame capture transmission."""
         self.total_frames += 1
         self.bytes_sent += size_bytes
+        self.rolling_transfers.append((time.time(), size_bytes))
+        self._prune_rolling_transfers()
+
+    def _prune_rolling_transfers(self) -> None:
+        now = time.time()
+        self.rolling_transfers = [item for item in self.rolling_transfers if now - item[0] <= 5.0]
+
+    def get_rolling_bandwidth_kbs(self) -> float:
+        """Calculate the rolling bandwidth in KB/s over the last 5 seconds."""
+        self._prune_rolling_transfers()
+        if not self.rolling_transfers:
+            return 0.0
+        total_bytes = sum(item[1] for item in self.rolling_transfers)
+        return (total_bytes / 1024.0) / 5.0
 
     def log_input(self, input_type: str) -> None:
         """Record an incoming mouse or keyboard action."""

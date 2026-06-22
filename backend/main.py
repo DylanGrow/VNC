@@ -49,17 +49,25 @@ webrtc_manager = WebRTCSessionManager()
 LAST_INPUT_TIME = 0.0
 ACTIVE_WEBSOCKETS = {}
 REMOTE_INPUT_LOCKED = False
+EVENT_LOOP = None
 
 def disconnect_all_operators():
     logger.info("System Tray: Disconnecting all remote operators...")
-    for conn_id, ws in list(ACTIVE_WEBSOCKETS.items()):
-        try:
-            asyncio.run_coroutine_threadsafe(
-                ws.close(code=status.WS_1001_GOING_AWAY, reason="Session terminated by server admin"),
-                asyncio.get_event_loop()
-            )
-        except Exception as e:
-            logger.debug(f"Failed to force close socket: {e}")
+    global EVENT_LOOP
+    if EVENT_LOOP is None:
+        logger.warning("System Tray: Main event loop is not registered yet.")
+        return
+        
+    def close_all():
+        for conn_id, ws in list(ACTIVE_WEBSOCKETS.items()):
+            try:
+                asyncio.create_task(
+                    ws.close(code=status.WS_1001_GOING_AWAY, reason="Session terminated by server admin")
+                )
+            except Exception as e:
+                logger.debug(f"Failed to force close socket: {e}")
+                
+    EVENT_LOOP.call_soon_threadsafe(close_all)
 
 def set_remote_input_lock(locked: bool):
     global REMOTE_INPUT_LOCKED
@@ -69,7 +77,8 @@ SYSTEM_TRAY = None
 
 @app.on_event("startup")
 def start_system_tray():
-    global SYSTEM_TRAY
+    global SYSTEM_TRAY, EVENT_LOOP
+    EVENT_LOOP = asyncio.get_running_loop()
     SYSTEM_TRAY = SystemTrayApp(
         disconnect_all_callback=disconnect_all_operators,
         input_lock_callback=set_remote_input_lock
@@ -105,6 +114,8 @@ async def audio_sender_task(websocket: WebSocket, conn_id: str):
         pass
     except Exception as e:
         logger.debug(f"Audio sender error on connection {conn_id}: {e}")
+    finally:
+        audio_capture.cleanup()
 
 @app.on_event("shutdown")
 def release_keys_on_shutdown():
@@ -500,7 +511,8 @@ async def get_metrics(current_user: TokenData = Depends(verify_token)):
         "uptime_seconds": round(metrics_collector.get_uptime(), 2),
         "total_frames_sent": metrics_collector.total_frames,
         "total_inputs_received": metrics_collector.total_inputs,
-        "memory_usage_mb": round(metrics_collector.get_memory_usage(), 2)
+        "memory_usage_mb": round(metrics_collector.get_memory_usage(), 2),
+        "rolling_bandwidth_kbs": round(metrics_collector.get_rolling_bandwidth_kbs(), 2)
     }
 
 @app.get("/health")

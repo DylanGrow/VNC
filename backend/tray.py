@@ -1,7 +1,6 @@
-# backend/tray.py
-import threading
-import logging
 import sys
+import logging
+import threading
 from PIL import Image, ImageDraw
 
 logger = logging.getLogger(__name__)
@@ -20,7 +19,11 @@ class SystemTrayApp:
         self.icon = None
         self.input_locked = False
         
-        if not self.available:
+        if sys.platform == "darwin":
+            logger.warning("System tray applet is disabled on macOS because pystray requires the main thread GUI loop.")
+            self.available = False
+            
+        if not self.available and sys.platform != "darwin":
             logger.info("pystray library not found. System tray applet disabled.")
 
     def create_image(self, color1=(15, 23, 42), color2=(99, 102, 241)):

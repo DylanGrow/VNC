@@ -17,8 +17,35 @@ FAILED_ATTEMPTS: Dict[str, List[datetime]] = defaultdict(list)
 # IP -> ban expiration datetime
 BANNED_IPS: Dict[str, datetime] = {}
 
+def prune_expired_auth_records():
+    """Prunes expired ban and failed attempt records to prevent memory growth leaks."""
+    now = datetime.now(timezone.utc)
+    expired_bans = [ip for ip, exp in BANNED_IPS.items() if now > exp]
+    for ip in expired_bans:
+        BANNED_IPS.pop(ip, None)
+        FAILED_ATTEMPTS.pop(ip, None)
+        
+    for ip, attempts in list(FAILED_ATTEMPTS.items()):
+        valid_attempts = [t for t in attempts if now - t < timedelta(minutes=10)]
+        if not valid_attempts:
+            FAILED_ATTEMPTS.pop(ip, None)
+        else:
+            FAILED_ATTEMPTS[ip] = valid_attempts
+
+    # Enforce hard upper boundaries to prevent memory DoS
+    if len(BANNED_IPS) > 10000:
+        sorted_bans = sorted(BANNED_IPS.items(), key=lambda x: x[1])
+        for ip, _ in sorted_bans[:len(BANNED_IPS) - 10000]:
+            BANNED_IPS.pop(ip, None)
+            
+    if len(FAILED_ATTEMPTS) > 10000:
+        excess = len(FAILED_ATTEMPTS) - 10000
+        for ip in list(FAILED_ATTEMPTS.keys())[:excess]:
+            FAILED_ATTEMPTS.pop(ip, None)
+
 def track_failed_attempt(ip: str):
     """Tracks login failures. If 5 failures occur in 10 minutes, bans IP for 30 minutes."""
+    prune_expired_auth_records()
     now = datetime.now(timezone.utc)
     FAILED_ATTEMPTS[ip].append(now)
     FAILED_ATTEMPTS[ip] = [t for t in FAILED_ATTEMPTS[ip] if now - t < timedelta(minutes=10)]
@@ -29,20 +56,19 @@ def track_failed_attempt(ip: str):
 
 def is_ip_banned(ip: str) -> bool:
     """Checks if IP is currently banned, cleans up expired ban records."""
+    prune_expired_auth_records()
     if ip not in BANNED_IPS:
         return False
     now = datetime.now(timezone.utc)
     if now > BANNED_IPS[ip]:
-        del BANNED_IPS[ip]
-        if ip in FAILED_ATTEMPTS:
-            del FAILED_ATTEMPTS[ip]
+        BANNED_IPS.pop(ip, None)
+        FAILED_ATTEMPTS.pop(ip, None)
         return False
     return True
 
 def clear_failed_attempts(ip: str):
     """Wipes failed attempt tracker for the given IP address."""
-    if ip in FAILED_ATTEMPTS:
-        del FAILED_ATTEMPTS[ip]
+    FAILED_ATTEMPTS.pop(ip, None)
 
 SECRET_KEY = os.getenv("SECRET_KEY", "change_this_to_a_very_secure_random_string_at_least_32_bytes_long")
 ALGORITHM = "HS256"

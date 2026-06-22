@@ -30,6 +30,14 @@ class VideoEncoder:
             
         try:
             import io
+            
+            # Handle dynamic resolution changes on the fly
+            if pil_image.width != self.width or pil_image.height != self.height:
+                logger.info(f"H.264 Encoder: Resolution change detected ({self.width}x{self.height} -> {pil_image.width}x{pil_image.height}). Reinitializing container.")
+                self.cleanup()
+                self.width = pil_image.width
+                self.height = pil_image.height
+
             if self.container is None:
                 self.output_buffer = io.BytesIO()
                 # Open an in-memory stream for h264 raw packets

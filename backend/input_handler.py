@@ -13,13 +13,12 @@ pyautogui.PAUSE = 0.0      # Minimize execution latency
 class InputValidator:
     def __init__(self):
         self.lock = threading.Lock()
-        # Whitelist of non-printable keyboard keys to prevent unauthorized sequence injection
         self.allowed_keys = {
             "enter", "backspace", "tab", "escape", "space",
             "up", "down", "left", "right",
             "home", "end", "pageup", "pagedown",
             "delete", "insert",
-            "shift", "ctrl", "alt", "capslock",
+            "shift", "ctrl", "alt", "capslock", "numlock", "scrolllock",
             "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12",
         }
         self.modifiers_held = set()
