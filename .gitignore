@@ -1,0 +1,19 @@
+# Python ignore
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+backend/.env
+backend/certs/
+backend/logs/
+
+# Frontend ignore
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# OS files
+.DS_Store
+Thumbs.db

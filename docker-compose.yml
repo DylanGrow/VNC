@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: vnc_backend
+    environment:
+      - SECURE_PASSWORD=your_secure_password
+      - SECRET_KEY=change_this_to_a_very_secure_random_string_at_least_32_bytes_long
+      - ACCESS_TOKEN_EXPIRE_MINUTES=15
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: vnc_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
