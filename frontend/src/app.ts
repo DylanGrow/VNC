@@ -29,6 +29,10 @@ export class ScreenShareApp {
   private txtPassword: HTMLInputElement;
   private elAuthError: HTMLElement;
   private chkViewer: HTMLInputElement;
+  private btnAudioToggle: HTMLButtonElement;
+  private svgAudioOn: HTMLElement;
+  private svgAudioOff: HTMLElement;
+  private txtAudio: HTMLElement;
 
   constructor() {
     // Instantiate sub-modules
@@ -49,6 +53,10 @@ export class ScreenShareApp {
     this.txtPassword = document.getElementById('password') as HTMLInputElement;
     this.elAuthError = document.getElementById('auth-error') as HTMLElement;
     this.chkViewer = document.getElementById('chk-viewer') as HTMLInputElement;
+    this.btnAudioToggle = document.getElementById('btn-audio-toggle') as HTMLButtonElement;
+    this.svgAudioOn = document.getElementById('svg-audio-on') as HTMLElement;
+    this.svgAudioOff = document.getElementById('svg-audio-off') as HTMLElement;
+    this.txtAudio = document.getElementById('txt-audio') as HTMLElement;
 
     // Register Event Hooks
     this.formAuth.addEventListener('submit', (e) => this.handleLogin(e));
@@ -56,6 +64,12 @@ export class ScreenShareApp {
     this.selectMonitor.addEventListener('change', () => this.handleMonitorChange());
     this.sliderQuality.addEventListener('input', () => this.handleQualityChange());
     this.btnFullscreen.addEventListener('click', () => this.toggleFullscreen());
+    this.btnAudioToggle.addEventListener('click', () => this.toggleAudio());
+
+    // Virtual keyboard combos
+    document.getElementById('btn-key-ctrlaltdel')?.addEventListener('click', () => this.sendKeyCombo(['ctrl', 'alt', 'delete']));
+    document.getElementById('btn-key-alttab')?.addEventListener('click', () => this.sendKeyCombo(['alt', 'tab']));
+    document.getElementById('btn-key-esc')?.addEventListener('click', () => this.sendKeyCombo(['escape']));
 
     // Connect remote presence indicators
     this.connection.onPresenceUpdate = (data) => this.handlePresenceUpdate(data);
@@ -115,6 +129,9 @@ export class ScreenShareApp {
 
         // Start background token rotation
         this.startTokenRefresh();
+        
+        // Show audio toggle controls
+        this.btnAudioToggle.classList.remove('hidden');
       }
     } catch (err) {
       console.error('[VNC App] Login exception:', err);
@@ -142,6 +159,9 @@ export class ScreenShareApp {
     this.input.disable();
     this.clipboard.setToken(null);
     this.clipboard.setCsrfToken('');
+    
+    // Hide audio toggle controls
+    this.btnAudioToggle.classList.add('hidden');
 
     this.modalAuth.classList.remove('hidden');
     this.btnLogout.classList.add('hidden');
@@ -299,5 +319,38 @@ export class ScreenShareApp {
       cursorEl.style.top = `${top}px`;
       cursorEl.classList.remove('hidden');
     }
+  }
+
+  private toggleAudio() {
+    this.connection.audioMuted = !this.connection.audioMuted;
+    if (this.connection.audioMuted) {
+      this.svgAudioOn.classList.add('hidden');
+      this.svgAudioOff.classList.remove('hidden');
+      this.txtAudio.textContent = 'Audio Muted';
+      this.btnAudioToggle.classList.remove('text-slate-300');
+      this.btnAudioToggle.classList.add('text-slate-500');
+    } else {
+      this.svgAudioOn.classList.remove('hidden');
+      this.svgAudioOff.classList.add('hidden');
+      this.txtAudio.textContent = 'Audio ON';
+      this.btnAudioToggle.classList.remove('text-slate-500');
+      this.btnAudioToggle.classList.add('text-slate-300');
+    }
+  }
+
+  private sendKeyCombo(keys: string[]) {
+    if (!this.token) return;
+    fetch('/api/input', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': this.csrfToken
+      },
+      body: JSON.stringify({
+        type: 'key_combo',
+        keys: keys,
+        monitorId: this.monitorId
+      })
+    }).catch(err => console.error('[VNC App] Failed to send key combo:', err));
   }
 }

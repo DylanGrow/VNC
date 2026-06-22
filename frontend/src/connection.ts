@@ -25,6 +25,7 @@ export class ConnectionManager {
 
   // Collaboration and Media properties
   public onPresenceUpdate: ((data: any) => void) | null = null;
+  public audioMuted = false;
   private audioCtx: AudioContext | null = null;
   private nextAudioTime = 0;
   private pc: RTCPeerConnection | null = null;
@@ -72,6 +73,8 @@ export class ConnectionManager {
       this.audioCtx.close().catch(() => {});
       this.audioCtx = null;
     }
+    const el = document.getElementById('hud-protocol');
+    if (el) el.textContent = 'WS (TCP)';
     this.updateUIState('disconnected');
   }
 
@@ -283,6 +286,8 @@ export class ConnectionManager {
       try {
         await this.pc.setRemoteDescription(new RTCSessionDescription({ sdp, type }));
         console.info('[VNC Connection] WebRTC signaling complete. Connection active.');
+        const el = document.getElementById('hud-protocol');
+        if (el) el.textContent = 'WebRTC (UDP)';
       } catch (err) {
         console.warn('[VNC Connection] Failed to set remote WebRTC description:', err);
       }
@@ -293,6 +298,9 @@ export class ConnectionManager {
    * Plays PCM 16-bit audio loopback chunks in queue.
    */
   private playAudio(base64Data: string, sampleRate: number, channels: number) {
+    if (this.audioMuted) {
+      return;
+    }
     try {
       if (!this.audioCtx) {
         this.audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();

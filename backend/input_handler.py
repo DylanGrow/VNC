@@ -127,5 +127,28 @@ class InputValidator:
                 
             return {"status": "success", "type": event_type, "key": key_lower}
 
+        elif event_type == "key_combo":
+            keys = data.get("keys", [])
+            if not keys:
+                raise ValueError("Missing keys list for combo")
+            
+            # Validate each key in the combo against the whitelist
+            for key in keys:
+                key_lower = key.lower()
+                if len(key_lower) == 1:
+                    char_code = ord(key_lower)
+                    if not (32 <= char_code <= 126):
+                        raise ValueError(f"Key '{key_lower}' is outside safe printable ASCII boundaries")
+                else:
+                    if key_lower not in self.allowed_keys:
+                        raise ValueError(f"Key '{key_lower}' is not present in security whitelist")
+            
+            try:
+                pyautogui.hotkey(*[k.lower() for k in keys])
+            except Exception as e:
+                logger.debug(f"Keyboard hotkey combo failed to execute: {e}")
+                
+            return {"status": "success", "type": "key_combo", "keys": keys}
+
         else:
             raise ValueError(f"Unsupported event type received: {event_type}")
