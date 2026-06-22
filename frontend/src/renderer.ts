@@ -40,11 +40,23 @@ export class CanvasRenderer {
    * Resizes the screen coordinate spaces to match the incoming frame source metrics.
    */
   public resize(width: number, height: number) {
-    if (this.canvas.width !== width || this.canvas.height !== height) {
-      this.canvas.width = width;
-      this.canvas.height = height;
-      this.offscreenCanvas.width = width;
-      this.offscreenCanvas.height = height;
+    const dpr = window.devicePixelRatio || 1;
+    const scaledWidth = width * dpr;
+    const scaledHeight = height * dpr;
+
+    if (this.canvas.width !== scaledWidth || this.canvas.height !== scaledHeight) {
+      this.canvas.width = scaledWidth;
+      this.canvas.height = scaledHeight;
+      this.offscreenCanvas.width = scaledWidth;
+      this.offscreenCanvas.height = scaledHeight;
+
+      // Keep layout sizes at logical dimensions
+      this.canvas.style.width = `${width}px`;
+      this.canvas.style.height = `${height}px`;
+
+      // Set scale transforms to ensure crisp visuals
+      this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this.offscreenCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
   }
 
@@ -63,7 +75,11 @@ export class CanvasRenderer {
 
     // Schedule paint of offscreen buffer to active canvas
     window.requestAnimationFrame(() => {
+      // Paint 1-to-1 pixels from offscreen canvas to main canvas backing store
+      this.ctx.save();
+      this.ctx.setTransform(1, 0, 0, 1, 0, 0);
       this.ctx.drawImage(this.offscreenCanvas, 0, 0);
+      this.ctx.restore();
     });
   }
 

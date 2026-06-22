@@ -1,4 +1,5 @@
-# backend/clipboard.py
+import os
+import sys
 import logging
 from typing import Optional
 
@@ -10,11 +11,40 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+def auto_configure_x11():
+    """Auto-detects X11 displays and authorization paths on Linux to support headless VM / Docker clipboard sync."""
+    if sys.platform.startswith("linux"):
+        if "DISPLAY" not in os.environ:
+            x11_dir = "/tmp/.X11-unix"
+            if os.path.exists(x11_dir):
+                displays = []
+                for entry in os.listdir(x11_dir):
+                    if entry.startswith("X"):
+                        try:
+                            display_num = int(entry[1:])
+                            displays.append(display_num)
+                        except ValueError:
+                            pass
+                if displays:
+                    detected = f":{min(displays)}"
+                    os.environ["DISPLAY"] = detected
+                    logger.info(f"Linux/X11: Auto-detected and configured DISPLAY={detected}")
+        
+        if "XAUTHORITY" not in os.environ:
+            home = os.path.expanduser("~")
+            xauth_path = os.path.join(home, ".Xauthority")
+            if os.path.exists(xauth_path):
+                os.environ["XAUTHORITY"] = xauth_path
+                logger.info(f"Linux/X11: Auto-detected and configured XAUTHORITY={xauth_path}")
+
 class ClipboardManager:
     def __init__(self, max_length: int = 102400):  # 100 KB safety limit
         self.max_length = max_length
         self.mock_clipboard = ""
         self.available = pyperclip_available
+        
+        # Enforce X11 configuration check on Linux
+        auto_configure_x11()
         
         if not self.available:
             logger.warning("pyperclip library not found. Falling back to in-memory clipboard emulation.")

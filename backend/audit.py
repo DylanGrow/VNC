@@ -3,6 +3,7 @@ import os
 import json
 import logging
 import base64
+import asyncio
 from datetime import datetime, timezone
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -14,6 +15,7 @@ class AuditLogger:
         self.log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
         os.makedirs(self.log_dir, exist_ok=True)
         self.log_path = os.path.join(self.log_dir, "audit.log")
+        self._lock = None
         
         # Load or generate 256-bit AES-GCM key
         key_env = os.getenv("AUDIT_LOG_KEY")
@@ -32,8 +34,14 @@ class AuditLogger:
             
         self.aesgcm = AESGCM(self.key)
 
-    def log_event(self, event_type: str, details: dict) -> None:
-        """Encrypts event details and logs to the audit file."""
+    @property
+    def lock(self) -> asyncio.Lock:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
+
+    async def log_event(self, event_type: str, details: dict) -> None:
+        """Encrypts event details and logs to the audit file asynchronously."""
         event = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "event_type": event_type,
@@ -48,7 +56,11 @@ class AuditLogger:
             encoded_nonce = base64.b64encode(nonce).decode("utf-8")
             encoded_cipher = base64.b64encode(ciphertext).decode("utf-8")
             
-            with open(self.log_path, "a") as f:
-                f.write(f"{encoded_nonce}:{encoded_cipher}\n")
+            async with self.lock:
+                await asyncio.to_thread(self._write_log, encoded_nonce, encoded_cipher)
         except Exception as e:
             logger.error(f"Audit log encryption failed: {e}")
+
+    def _write_log(self, encoded_nonce: str, encoded_cipher: str) -> None:
+        with open(self.log_path, "a") as f:
+            f.write(f"{encoded_nonce}:{encoded_cipher}\n")

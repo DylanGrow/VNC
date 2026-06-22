@@ -65,13 +65,26 @@ def set_remote_input_lock(locked: bool):
     global REMOTE_INPUT_LOCKED
     REMOTE_INPUT_LOCKED = locked
 
+SYSTEM_TRAY = None
+
 @app.on_event("startup")
 def start_system_tray():
-    tray = SystemTrayApp(
+    global SYSTEM_TRAY
+    SYSTEM_TRAY = SystemTrayApp(
         disconnect_all_callback=disconnect_all_operators,
         input_lock_callback=set_remote_input_lock
     )
-    tray.run()
+    SYSTEM_TRAY.run()
+
+@app.on_event("shutdown")
+def stop_system_tray():
+    global SYSTEM_TRAY
+    if SYSTEM_TRAY and SYSTEM_TRAY.icon:
+        logger.info("Stopping system tray applet...")
+        try:
+            SYSTEM_TRAY.icon.stop()
+        except Exception as e:
+            logger.debug(f"Failed to stop system tray icon: {e}")
 
 async def audio_sender_task(websocket: WebSocket, conn_id: str):
     audio_capture = AudioCapture()
@@ -143,7 +156,7 @@ async def login(credentials: dict, request: Request):
     client_ip = request.client.host if request.client else "unknown"
     
     if is_ip_banned(client_ip):
-        audit_logger.log_event("login_blocked_banned_ip", {"username": username, "ip": client_ip})
+        await audit_logger.log_event("login_blocked_banned_ip", {"username": username, "ip": client_ip})
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Too many authentication failures. Your IP is banned for 30 minutes."
@@ -158,20 +171,21 @@ async def login(credentials: dict, request: Request):
             "csrf_token": csrf_token,
             "expires_in": 900
         })
+        is_secure = (request.url.scheme == "https") or (os.getenv("ENV", "development").lower() == "production")
         response.set_cookie(
             key="access_token",
             value=token,
             httponly=True,
-            secure=False,  # Set to True in production to enforce HTTPS
-            samesite="lax",
+            secure=is_secure,
+            samesite="strict",
             max_age=900
         )
         clear_failed_attempts(client_ip)
-        audit_logger.log_event("login_success", {"username": username, "ip": client_ip, "role": role})
+        await audit_logger.log_event("login_success", {"username": username, "ip": client_ip, "role": role})
         return response
         
     track_failed_attempt(client_ip)
-    audit_logger.log_event("login_failed", {"username": username, "ip": client_ip})
+    await audit_logger.log_event("login_failed", {"username": username, "ip": client_ip})
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED, 
         detail="Invalid credentials supplied"
@@ -181,7 +195,7 @@ async def login(credentials: dict, request: Request):
 async def logout(request: Request):
     """Wipes the session cookie and signs out the user."""
     client_ip = request.client.host if request.client else "unknown"
-    audit_logger.log_event("logout", {"ip": client_ip})
+    await audit_logger.log_event("logout", {"ip": client_ip})
     response = JSONResponse(content={"status": "success"})
     response.delete_cookie(key="access_token")
     return response
@@ -192,18 +206,19 @@ async def refresh_token(request: Request, current_user: TokenData = Depends(veri
     new_csrf = secrets.token_hex(16)
     token = issue_token(current_user.sub, role=current_user.role, csrf_token=new_csrf)
     client_ip = request.client.host if request.client else "unknown"
-    audit_logger.log_event("token_refresh", {"username": current_user.sub, "ip": client_ip})
+    await audit_logger.log_event("token_refresh", {"username": current_user.sub, "ip": client_ip})
     response = JSONResponse(content={
         "status": "success",
         "role": current_user.role,
         "csrf_token": new_csrf
     })
+    is_secure = (request.url.scheme == "https") or (os.getenv("ENV", "development").lower() == "production")
     response.set_cookie(
         key="access_token",
         value=token,
         httponly=True,
-        secure=False,
-        samesite="lax",
+        secure=is_secure,
+        samesite="strict",
         max_age=900
     )
     return response
@@ -275,7 +290,7 @@ async def websocket_screen(websocket: WebSocket, monitor_id: int = 1):
 
     await websocket.accept()
     logger.info(f"WebSocket connection {conn_id} accepted from {client_ip} on monitor {monitor_id}")
-    audit_logger.log_event("session_start", {"ip": client_ip, "conn_id": conn_id})
+    await audit_logger.log_event("session_start", {"ip": client_ip, "conn_id": conn_id})
 
     # Initialize dynamic session configurations
     session_config = {
@@ -304,7 +319,7 @@ async def websocket_screen(websocket: WebSocket, monitor_id: int = 1):
             last_pong = session_config.get("last_pong_time", time.time())
             if time.time() - last_pong > 15.0:
                 logger.warning(f"Connection {conn_id} heartbeat timeout. Cleaning up.")
-                audit_logger.log_event("heartbeat_timeout", {"ip": client_ip, "conn_id": conn_id})
+                await audit_logger.log_event("heartbeat_timeout", {"ip": client_ip, "conn_id": conn_id})
                 break
 
             quality = session_config["quality"]
@@ -389,9 +404,11 @@ async def websocket_screen(websocket: WebSocket, monitor_id: int = 1):
             await audio_task
         except asyncio.CancelledError:
             pass
+        # Release any stuck modifiers on disconnect
+        await asyncio.to_thread(input_validator.release_all_modifiers)
         ACTIVE_WEBSOCKETS.pop(conn_id, None)
         connection_manager.remove_connection(client_ip, conn_id)
-        audit_logger.log_event("session_end", {"ip": client_ip, "conn_id": conn_id})
+        await audit_logger.log_event("session_end", {"ip": client_ip, "conn_id": conn_id})
         logger.info(f"WebSocket session {conn_id} destroyed")
 
 # ------------------ Input Events API ------------------
@@ -429,7 +446,7 @@ async def handle_input(data: dict, current_user: TokenData = Depends(verify_toke
 
     if event_type and event_type != "mouse_move":
         client_ip = request.client.host if request and request.client else "unknown"
-        audit_logger.log_event("input_command", {
+        await audit_logger.log_event("input_command", {
             "username": current_user.sub,
             "ip": client_ip,
             "event": data
@@ -441,13 +458,13 @@ async def handle_input(data: dict, current_user: TokenData = Depends(verify_toke
         monitor = next((m for m in monitors if m["id"] == monitor_id), monitors[0])
         w, h = monitor["width"], monitor["height"]
         
-        result = input_validator.validate_and_execute(data, w, h)
+        result = await asyncio.to_thread(input_validator.validate_and_execute, data, w, h)
         metrics_collector.log_input(data.get("type", "unknown"))
         return result
     except ValueError as e:
         if "prohibited" in str(e):
             client_ip = request.client.host if request and request.client else "unknown"
-            audit_logger.log_event("security_violation_block", {
+            await audit_logger.log_event("security_violation_block", {
                 "username": current_user.sub,
                 "ip": client_ip,
                 "detail": str(e),
@@ -460,7 +477,7 @@ async def handle_input(data: dict, current_user: TokenData = Depends(verify_toke
 async def set_clipboard(data: dict, current_user: TokenData = Depends(verify_token), request: Request = None):
     """Receives client text payload to update host clipboard."""
     client_ip = request.client.host if request and request.client else "unknown"
-    audit_logger.log_event("clipboard_sync", {
+    await audit_logger.log_event("clipboard_sync", {
         "username": current_user.sub,
         "ip": client_ip,
         "length": len(data.get("data", ""))

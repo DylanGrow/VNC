@@ -330,6 +330,9 @@ export class ConnectionManager {
       const bufferDuration = audioBuffer.duration;
       if (this.nextAudioTime < this.audioCtx.currentTime) {
         this.nextAudioTime = this.audioCtx.currentTime;
+      } else if (this.nextAudioTime - this.audioCtx.currentTime > 0.5) {
+        console.warn(`[Audio] Drift detected: ${this.nextAudioTime - this.audioCtx.currentTime}s. Resetting queue.`);
+        this.nextAudioTime = this.audioCtx.currentTime;
       }
       source.start(this.nextAudioTime);
       this.nextAudioTime += bufferDuration;

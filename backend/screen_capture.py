@@ -7,28 +7,46 @@ import logging
 import hashlib
 import math
 import time
+import threading
 from typing import List, Dict, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
 class ScreenCapture:
     def __init__(self):
-        try:
-            self.sct = mss.mss()
-            _ = self.sct.monitors
-            self.headless = False
-        except Exception as e:
-            logger.warning(f"Failed to initialize mss (could be running headlessly): {e}")
-            self.sct = None
-            self.headless = True
+        self.lock = threading.Lock()
+        self.sct = None
+        self.headless = False
+        
+        # Test initial connection
+        self._get_sct()
             
         self.prev_hashes: Dict[int, str] = {}
         # Stores historical hashes of quadrants per monitor {monitor_id: {quad_index: hash}}
         self.quadrant_hashes: Dict[int, Dict[int, str]] = {}
 
+    def _get_sct(self) -> Optional[mss.mss]:
+        """Returns the active mss connection, attempting to restore it if closed or broken."""
+        if self.headless:
+            return None
+        with self.lock:
+            if self.sct is None:
+                try:
+                    self.sct = mss.mss()
+                    # Verify handle validity by querying monitors
+                    _ = self.sct.monitors
+                    self.headless = False
+                except Exception as e:
+                    logger.warning(f"Failed to initialize mss connection handle: {e}")
+                    self.sct = None
+                    # Fallback to headless only if it consistently fails
+                    self.headless = True
+            return self.sct
+
     def get_monitors(self) -> List[Dict]:
         """Get list of available monitors"""
-        if self.headless or not self.sct or not self.sct.monitors:
+        sct = self._get_sct()
+        if not sct:
             return [{
                 "id": 1,
                 "width": 1280,
@@ -38,27 +56,46 @@ class ScreenCapture:
                 "is_primary": True
             }]
             
-        monitors = []
-        for i, mon in enumerate(self.sct.monitors[1:], 1):
-            monitors.append({
-                "id": i,
-                "width": mon["width"],
-                "height": mon["height"],
-                "left": mon["left"],
-                "top": mon["top"],
-                "is_primary": i == 1
-            })
-            
-        if not monitors:
-            monitors.append({
+        try:
+            with self.lock:
+                monitors_list = sct.monitors
+            monitors = []
+            for i, mon in enumerate(monitors_list[1:], 1):
+                monitors.append({
+                    "id": i,
+                    "width": mon["width"],
+                    "height": mon["height"],
+                    "left": mon["left"],
+                    "top": mon["top"],
+                    "is_primary": i == 1
+                })
+            if not monitors:
+                monitors.append({
+                    "id": 1,
+                    "width": 1280,
+                    "height": 720,
+                    "left": 0,
+                    "top": 0,
+                    "is_primary": True
+                })
+            return monitors
+        except Exception as e:
+            logger.debug(f"Failed to fetch monitors via mss: {e}. Resetting handle.")
+            with self.lock:
+                if self.sct:
+                    try:
+                        self.sct.close()
+                    except Exception:
+                        pass
+                    self.sct = None
+            return [{
                 "id": 1,
                 "width": 1280,
                 "height": 720,
                 "left": 0,
                 "top": 0,
                 "is_primary": True
-            })
-        return monitors
+            }]
 
     def adjust_display_resolution(self, monitor_id: int, width: int, height: int) -> bool:
         """Attempts to dynamically resize host display resolution (Linux xrandr command)."""
@@ -89,24 +126,27 @@ class ScreenCapture:
         Returns:
             Tuple[base64_jpeg_string, has_changed, x, y, width, height, is_delta]
         """
-        if self.headless or not self.sct:
+        sct = self._get_sct()
+        if not sct:
             mock_data, changed = self._generate_mock_frame(resolution)
             w, h = resolution if resolution else (1280, 720)
             return mock_data, changed, 0, 0, w, h, False
 
         try:
-            monitors = self.sct.monitors
-            if not monitors or len(monitors) <= 1:
-                mock_data, changed = self._generate_mock_frame(resolution)
-                w, h = resolution if resolution else (1280, 720)
-                return mock_data, changed, 0, 0, w, h, False
+            with self.lock:
+                monitors = sct.monitors
+                if not monitors or len(monitors) <= 1:
+                    mock_data, changed = self._generate_mock_frame(resolution)
+                    w, h = resolution if resolution else (1280, 720)
+                    return mock_data, changed, 0, 0, w, h, False
 
-            # Ensure monitor index is valid
-            if monitor_id < 1 or monitor_id >= len(monitors):
-                monitor_id = 1
+                # Ensure monitor index is valid
+                if monitor_id < 1 or monitor_id >= len(monitors):
+                    monitor_id = 1
+                
+                monitor = monitors[monitor_id]
+                screenshot = sct.grab(monitor)
             
-            monitor = monitors[monitor_id]
-            screenshot = self.sct.grab(monitor)
             img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
             
             if resolution and (img.width != resolution[0] or img.height != resolution[1]):
@@ -169,29 +209,45 @@ class ScreenCapture:
             return base64_str, True, tx, ty, tw, th, True
 
         except Exception as e:
-            logger.error(f"Failed to capture screen: {e}. Falling back to mock generator.")
+            logger.error(f"Failed to capture screen: {e}. Resetting mss handle.")
+            with self.lock:
+                if self.sct:
+                    try:
+                        self.sct.close()
+                    except Exception:
+                        pass
+                    self.sct = None
             mock_data, changed = self._generate_mock_frame(resolution)
             w, h = resolution if resolution else (1280, 720)
             return mock_data, changed, 0, 0, w, h, False
 
     def capture_pil(self, monitor_id: int = 1, resolution: Optional[Tuple[int, int]] = (1280, 720)):
         """Capture screen and return as PIL Image object."""
-        if self.headless or not self.sct:
+        sct = self._get_sct()
+        if not sct:
             return None
         try:
-            monitors = self.sct.monitors
-            if not monitors or len(monitors) <= 1:
-                return None
-            if monitor_id < 1 or monitor_id >= len(monitors):
-                monitor_id = 1
-            monitor = monitors[monitor_id]
-            screenshot = self.sct.grab(monitor)
+            with self.lock:
+                monitors = sct.monitors
+                if not monitors or len(monitors) <= 1:
+                    return None
+                if monitor_id < 1 or monitor_id >= len(monitors):
+                    monitor_id = 1
+                monitor = monitors[monitor_id]
+                screenshot = sct.grab(monitor)
             img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
             if resolution and (img.width != resolution[0] or img.height != resolution[1]):
                 img = img.resize(resolution, Image.Resampling.LANCZOS)
             return img
         except Exception as e:
-            logger.debug(f"Failed to capture PIL image: {e}")
+            logger.debug(f"Failed to capture PIL image: {e}. Resetting handle.")
+            with self.lock:
+                if self.sct:
+                    try:
+                        self.sct.close()
+                    except Exception:
+                        pass
+                    self.sct = None
             return None
 
     def _generate_mock_frame(self, resolution: Optional[Tuple[int, int]]) -> Tuple[str, bool]:
