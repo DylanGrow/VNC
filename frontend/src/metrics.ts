@@ -47,6 +47,8 @@ export class MetricsTracker {
     this.pingTimes.set(id, performance.now());
   }
 
+  public rttHistory: number[] = [];
+
   /**
    * Compute round-trip time difference upon receiving a matching pong.
    */
@@ -58,6 +60,12 @@ export class MetricsTracker {
         this.elRtt.textContent = `${rtt} ms`;
       }
       this.pingTimes.delete(id);
+      
+      this.rttHistory.push(rtt);
+      if (this.rttHistory.length > 30) {
+        this.rttHistory.shift();
+      }
+      
       return rtt;
     }
     return null;
@@ -94,6 +102,7 @@ export class MetricsTracker {
     this.bytesCount = 0;
     this.drops = 0;
     this.pingTimes.clear();
+    this.rttHistory = [];
     
     if (this.elFps) this.elFps.textContent = '0';
     if (this.elRtt) this.elRtt.textContent = '0 ms';

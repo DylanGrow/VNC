@@ -48,21 +48,25 @@ class AudioCapture:
             # Re-use or open persistent recorder loopback stream
             if self.recorder is None:
                 speaker = sc.default_speaker()
+                if speaker is None:
+                    raise RuntimeError("No default speaker detected on host system.")
                 mic = sc.get_microphone(id=speaker.id, include_loopback=True)
+                if mic is None:
+                    raise RuntimeError("No loopback microphone interface found on host system.")
                 self.recorder_context = mic.recorder(samplerate=self.sample_rate, channels=self.channels)
                 self.recorder = self.recorder_context.__enter__()
                 
             data = self.recorder.record(numsamples=num_samples)
-            # Convert float32 frames [-1.0, 1.0] to 16-bit PCM bytes
-            buf = bytearray()
-            for val in data.flatten():
-                int_val = int(max(-1.0, min(1.0, val)) * 32767)
-                buf.extend(struct.pack("<h", int_val))
-            return bytes(buf)
+            # Convert float32 frames [-1.0, 1.0] to 16-bit PCM bytes using fast numpy vectorization
+            import numpy as np
+            clipped = np.clip(data.flatten(), -1.0, 1.0)
+            pcm16 = (clipped * 32767).astype(np.int16)
+            return pcm16.tobytes()
         except Exception as e:
-            logger.debug(f"Native audio capture failed: {e}. Resetting recorder handle.")
+            logger.warning(f"Native audio capture failed: {e}. Falling back to synthetic generator.")
+            self.available = False
             self.cleanup()
-            return b"\x00" * (num_samples * 2)
+            return self.read_chunk(duration_ms)
 
     def cleanup(self):
         """Cleanly releases the active soundcard recorder context."""

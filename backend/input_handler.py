@@ -85,9 +85,11 @@ class InputValidator:
                         button = data.get("button", "left")
                         pyautogui.mouseUp(abs_x, abs_y, button=button)
                     elif event_type == "scroll":
-                        delta_y = int(data.get("deltaY", 0))
-                        # Invert scroll direction: browser scroll-down is positive, PyAutoGUI is negative
-                        pyautogui.scroll(-delta_y)
+                        delta_y = float(data.get("deltaY", 0))
+                        # Scale down browser deltaY (typically ~100px per tick) to PyAutoGUI click units
+                        clicks = int(round(-delta_y / 100.0))
+                        if clicks != 0:
+                            pyautogui.scroll(clicks)
                 except Exception as e:
                     # Log but do not crash (fails gracefully in headless VM contexts)
                     logger.debug(f"Input action '{event_type}' simulated. Reason: {e}")
@@ -147,9 +149,17 @@ class InputValidator:
                 if not keys:
                     raise ValueError("Missing keys list for combo")
                 
+                keys_lower = []
                 # Validate each key in the combo against the whitelist
                 for key in keys:
+                    if not isinstance(key, str):
+                        raise ValueError("Keys must be strings")
                     key_lower = key.lower()
+                    keys_lower.append(key_lower)
+                    
+                    if key_lower in self.blacklisted_keys:
+                        raise ValueError(f"Keystroke '{key}' is prohibited by security ACL policies.")
+                        
                     if len(key_lower) == 1:
                         char_code = ord(key_lower)
                         if not (32 <= char_code <= 126):
@@ -158,8 +168,31 @@ class InputValidator:
                         if key_lower not in self.allowed_keys:
                             raise ValueError(f"Key '{key_lower}' is not present in security whitelist")
                 
+                # Security ACL combination checks
+                if "alt" in keys_lower and ("tab" in keys_lower or "f4" in keys_lower):
+                    raise ValueError("Hotkey combination Alt+Tab/F4 is prohibited by security ACL policies.")
+                if "ctrl" in keys_lower and "escape" in keys_lower:
+                    raise ValueError("Hotkey combination Ctrl+Escape is prohibited by security ACL policies.")
+                if "win" in keys_lower:
+                    raise ValueError("Windows shortcut key combination is prohibited by security ACL policies.")
+                
                 try:
-                    pyautogui.hotkey(*[k.lower() for k in keys])
+                    # Temporarily release any modifiers held down by the user to avoid input pollution
+                    held_modifiers = list(self.modifiers_held)
+                    for mod in held_modifiers:
+                        try:
+                            pyautogui.keyUp(mod)
+                        except Exception:
+                            pass
+
+                    pyautogui.hotkey(*keys_lower)
+
+                    # Restore modifier states
+                    for mod in held_modifiers:
+                        try:
+                            pyautogui.keyDown(mod)
+                        except Exception:
+                            pass
                 except Exception as e:
                     logger.debug(f"Keyboard hotkey combo failed to execute: {e}")
                     

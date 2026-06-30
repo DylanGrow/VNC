@@ -25,8 +25,11 @@ export class InputHandler {
   // Local HUD overlays
   private elCursor: HTMLElement | null = null;
 
-  constructor(canvas: HTMLCanvasElement) {
+  private sendCallback?: (payload: any) => boolean;
+
+  constructor(canvas: HTMLCanvasElement, sendCallback?: (payload: any) => boolean) {
     this.canvas = canvas;
+    this.sendCallback = sendCallback;
     this.elCursor = document.getElementById('virtual-cursor');
   }
 
@@ -79,6 +82,7 @@ export class InputHandler {
     this.canvas.addEventListener('touchstart', this.onTouchStart, { passive: false });
     this.canvas.addEventListener('touchmove', this.onTouchMove, { passive: false });
     this.canvas.addEventListener('touchend', this.onTouchEnd, { passive: false });
+    this.canvas.addEventListener('touchcancel', this.onTouchCancel, { passive: false });
 
     // Global document keyboard listeners
     document.addEventListener('keydown', this.onKeyDown);
@@ -114,6 +118,7 @@ export class InputHandler {
     this.canvas.removeEventListener('touchstart', this.onTouchStart);
     this.canvas.removeEventListener('touchmove', this.onTouchMove);
     this.canvas.removeEventListener('touchend', this.onTouchEnd);
+    this.canvas.removeEventListener('touchcancel', this.onTouchCancel);
 
     document.removeEventListener('keydown', this.onKeyDown);
     document.removeEventListener('keyup', this.onKeyUp);
@@ -149,6 +154,15 @@ export class InputHandler {
       return;
     }
 
+    const fullPayload = {
+      ...(payload as Record<string, unknown>),
+      monitorId: this.monitorId
+    };
+
+    if (this.sendCallback && this.sendCallback(fullPayload)) {
+      return;
+    }
+
     fetch('/api/input', {
       method: 'POST',
       headers: {
@@ -156,10 +170,7 @@ export class InputHandler {
         'X-CSRF-Token': this.csrfToken
       },
       credentials: 'same-origin',
-      body: JSON.stringify({
-        ...(payload as Record<string, unknown>),
-        monitorId: this.monitorId
-      })
+      body: JSON.stringify(fullPayload)
     }).catch(err => {
       console.error('[InputHandler] Failed to dispatch input action:', err);
     });
@@ -197,6 +208,7 @@ export class InputHandler {
   };
 
   private onMouseDown = (e: MouseEvent) => {
+    window.dispatchEvent(new CustomEvent('vnc-menu-collapse'));
     const { x, y } = this.getCoordinates(e);
     const buttonMap: Record<number, 'left' | 'middle' | 'right'> = {
       0: 'left',
@@ -282,12 +294,28 @@ export class InputHandler {
       return;
     }
 
-    const key = this.normalizeKey(e.key);
-    // Suppresses duplicate inputs when holding down keyboard keys
-    if (this.activeKeys.has(key)) {
+    // Allow critical browser/system hotkeys to pass through
+    if (
+      e.key === 'F5' || 
+      e.key === 'F11' || 
+      e.key === 'F12' || 
+      ((e.ctrlKey || e.metaKey) && ['t', 'w', 'n', 'r'].includes(e.key.toLowerCase()))
+    ) {
       return;
     }
-    this.activeKeys.add(key);
+
+    const key = this.normalizeKey(e.key);
+    // Suppresses duplicate inputs when holding down modifier keyboard keys
+    if (e.repeat) {
+      if (['control', 'shift', 'alt', 'meta'].includes(key.toLowerCase())) {
+        return;
+      }
+    } else {
+      if (this.activeKeys.has(key)) {
+        return;
+      }
+      this.activeKeys.add(key);
+    }
 
     e.preventDefault();
     const parsed = KeyboardEventSchema.safeParse({
@@ -304,6 +332,16 @@ export class InputHandler {
   private onKeyUp = (e: KeyboardEvent) => {
     const activeTagName = document.activeElement?.tagName;
     if (activeTagName === 'TEXTAREA' || activeTagName === 'INPUT') {
+      return;
+    }
+
+    // Allow critical browser/system hotkeys to pass through
+    if (
+      e.key === 'F5' || 
+      e.key === 'F11' || 
+      e.key === 'F12' || 
+      ((e.ctrlKey || e.metaKey) && ['t', 'w', 'n', 'r'].includes(e.key.toLowerCase()))
+    ) {
       return;
     }
 
@@ -356,6 +394,8 @@ export class InputHandler {
 
   private onTouchStart = (e: TouchEvent) => {
     e.preventDefault();
+    this.cachedRect = this.canvas.getBoundingClientRect();
+    window.dispatchEvent(new CustomEvent('vnc-menu-collapse'));
     if (e.touches.length === 0) {
       return;
     }
@@ -481,6 +521,29 @@ export class InputHandler {
       monitorId: this.monitorId
     });
 
+    if (parsed.success) {
+      this.sendEvent(parsed.data);
+    }
+  };
+
+  private onTouchCancel = (e: TouchEvent) => {
+    e.preventDefault();
+    if (this.touchStartTimer !== null) {
+      window.clearTimeout(this.touchStartTimer);
+      this.touchStartTimer = null;
+    }
+    if (e.changedTouches.length === 0) {
+      return;
+    }
+    const touch = e.changedTouches[0];
+    const { x, y } = this.getCoordinatesFromTouch(touch);
+    const parsed = MouseEventSchema.safeParse({
+      type: 'mouse_up',
+      x,
+      y,
+      button: 'left',
+      monitorId: this.monitorId
+    });
     if (parsed.success) {
       this.sendEvent(parsed.data);
     }

@@ -12,9 +12,10 @@ except ImportError:
     pystray_available = False
 
 class SystemTrayApp:
-    def __init__(self, disconnect_all_callback=None, input_lock_callback=None):
+    def __init__(self, disconnect_all_callback=None, input_lock_callback=None, exit_callback=None):
         self.disconnect_all = disconnect_all_callback
         self.input_lock = input_lock_callback
+        self.exit_callback = exit_callback
         self.available = pystray_available
         self.icon = None
         self.input_locked = False
@@ -47,7 +48,21 @@ class SystemTrayApp:
     def on_exit(self, icon):
         logger.info("Tray applet: Requesting exit VNC server.")
         icon.stop()
-        sys.exit(0)
+        if self.exit_callback:
+            try:
+                self.exit_callback()
+                return
+            except Exception as e:
+                logger.debug(f"Exit callback failed: {e}")
+                
+        import os
+        import signal
+        try:
+            os.kill(os.getpid(), signal.SIGTERM)
+        except Exception as e:
+            logger.debug(f"Failed to propagate exit signal: {e}")
+            import sys
+            sys.exit(0)
 
     def run(self):
         """Launches the system tray applet on a separate daemon thread."""

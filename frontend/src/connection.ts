@@ -14,6 +14,10 @@ export class ConnectionManager {
   private metrics: MetricsTracker;
   private lastQuality = 75;
   private lastScale = 1.0;
+  
+  public get isConnected(): boolean {
+    return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
 
   // DOM Bindings
   private elBadge: HTMLElement | null = null;
@@ -25,10 +29,22 @@ export class ConnectionManager {
 
   // Collaboration and Media properties
   public onPresenceUpdate: ((data: any) => void) | null = null;
-  public audioMuted = false;
+  private _audioMuted = false;
+  public get audioMuted(): boolean {
+    return this._audioMuted;
+  }
+  public set audioMuted(val: boolean) {
+    this._audioMuted = val;
+    if (this.remoteAudio) {
+      this.remoteAudio.muted = val;
+    }
+  }
   private audioCtx: AudioContext | null = null;
   private nextAudioTime = 0;
   private pc: RTCPeerConnection | null = null;
+  private remoteVideo: HTMLVideoElement | null = null;
+  private remoteAudio: HTMLAudioElement | null = null;
+  private videoRenderLoopId: number | null = null;
 
   constructor(renderer: CanvasRenderer, metrics: MetricsTracker) {
     this.renderer = renderer;
@@ -65,6 +81,26 @@ export class ConnectionManager {
       this.ws.close();
       this.ws = null;
     }
+    if (this.videoRenderLoopId !== null) {
+      window.cancelAnimationFrame(this.videoRenderLoopId);
+      this.videoRenderLoopId = null;
+    }
+    if (this.remoteVideo) {
+      try {
+        this.remoteVideo.pause();
+        this.remoteVideo.srcObject = null;
+        this.remoteVideo.remove();
+      } catch (ex) {}
+      this.remoteVideo = null;
+    }
+    if (this.remoteAudio) {
+      try {
+        this.remoteAudio.pause();
+        this.remoteAudio.srcObject = null;
+        this.remoteAudio.remove();
+      } catch (ex) {}
+      this.remoteAudio = null;
+    }
     if (this.pc) {
       this.pc.close();
       this.pc = null;
@@ -73,6 +109,7 @@ export class ConnectionManager {
       this.audioCtx.close().catch(() => {});
       this.audioCtx = null;
     }
+    this.nextAudioTime = 0;
     const el = document.getElementById('hud-protocol');
     if (el) el.textContent = 'WS (TCP)';
     this.updateUIState('disconnected');
@@ -170,21 +207,7 @@ export class ConnectionManager {
           }
         } 
         
-        // H.264 video_frame branch
-        else if (rawMsg.type === 'video_frame') {
-          this.renderer.decodeFrame(
-            rawMsg.data,
-            (img) => {
-              this.renderer.render(img, 0, 0, img.naturalWidth, img.naturalHeight, false);
-              this.renderer.recycle(img);
-              this.metrics.recordFrame(rawMsg.data.length * 0.75);
-            },
-            () => {
-              console.warn(`[VNC Connection] Error decoding H.264 video frame`);
-              this.metrics.recordDrop();
-            }
-          );
-        }
+
 
         // WebRTC answer branch
         else if (rawMsg.type === 'webrtc_answer') {
@@ -213,12 +236,13 @@ export class ConnectionManager {
             const { id } = parsed.data;
             this.metrics.recordPing(id);
             
-            // Send matching response back immediately
+            // Send matching response back immediately with RTT payload
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-              this.ws.send(JSON.stringify({ type: 'pong', id }));
               const rtt = this.metrics.recordPong(id);
+              this.ws.send(JSON.stringify({ type: 'pong', id, rtt }));
               if (rtt !== null) {
                 this.adjustQualityBasedOnRTT(rtt);
+                this.renderer.drawSparkline('sparkline-canvas', this.metrics.rttHistory);
               }
             }
           }
@@ -236,7 +260,17 @@ export class ConnectionManager {
         this.pc = null;
       }
 
-      if (this.token) {
+      // Check for auth policy violation (code 1008) with invalid/missing token reason
+      const isAuthError = event.code === 1008 && 
+        (event.reason.toLowerCase().includes('token') || event.reason.toLowerCase().includes('credential'));
+
+      if (isAuthError) {
+        console.error('[VNC Connection] Authentication failed. Stopping reconnection.');
+        this.token = null;
+        document.cookie = "access_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+        this.updateUIState('disconnected');
+        window.dispatchEvent(new CustomEvent('vnc-auth-required', { detail: event.reason }));
+      } else if (this.token) {
         this.updateUIState('connecting');
         this.reconnector.scheduleReconnect(() => this.establishConnection());
       } else {
@@ -262,8 +296,65 @@ export class ConnectionManager {
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
       });
 
+      this.pc.onconnectionstatechange = () => {
+        console.info('[VNC Connection] WebRTC state change:', this.pc?.connectionState);
+        if (this.pc?.connectionState === 'failed') {
+          console.warn('[VNC Connection] WebRTC connection failed. Falling back to WebSocket.');
+          const el = document.getElementById('hud-protocol');
+          if (el) el.textContent = 'WS (TCP) - Fallback';
+          if (this.pc) {
+            this.pc.close();
+            this.pc = null;
+          }
+        }
+      };
+
+      // Request transceivers to receive video and audio media streams from the host
+      this.pc.addTransceiver('video', { direction: 'recvonly' });
+      this.pc.addTransceiver('audio', { direction: 'recvonly' });
+
       this.pc.ontrack = (event) => {
         console.info('[VNC Connection] WebRTC media track received:', event.track.kind);
+        if (event.track.kind === 'video') {
+          if (!this.remoteVideo) {
+            this.remoteVideo = document.createElement('video');
+            this.remoteVideo.autoplay = true;
+            this.remoteVideo.playsInline = true;
+            this.remoteVideo.muted = true;
+            this.remoteVideo.style.display = 'none';
+            document.body.appendChild(this.remoteVideo);
+          }
+          this.remoteVideo.srcObject = event.streams[0];
+          
+          const renderFrame = () => {
+            if (this.remoteVideo && this.isConnected && this.remoteVideo.readyState >= this.remoteVideo.HAVE_CURRENT_DATA) {
+              this.renderer.render(this.remoteVideo);
+            }
+            if (this.remoteVideo && this.isConnected) {
+              this.videoRenderLoopId = window.requestAnimationFrame(renderFrame);
+            }
+          };
+
+          this.remoteVideo.onloadedmetadata = () => {
+            if (this.remoteVideo) {
+              this.remoteVideo.play().catch((e) => console.debug('WebRTC play video failed:', e));
+            }
+            if (this.videoRenderLoopId !== null) {
+              window.cancelAnimationFrame(this.videoRenderLoopId);
+            }
+            this.videoRenderLoopId = window.requestAnimationFrame(renderFrame);
+          };
+        } else if (event.track.kind === 'audio') {
+          if (!this.remoteAudio) {
+            this.remoteAudio = document.createElement('audio');
+            this.remoteAudio.autoplay = true;
+            this.remoteAudio.style.display = 'none';
+            document.body.appendChild(this.remoteAudio);
+          }
+          this.remoteAudio.srcObject = event.streams[0];
+          this.remoteAudio.muted = this.audioMuted;
+          this.remoteAudio.play().catch((e) => console.debug('WebRTC play audio failed:', e));
+        }
       };
 
       const offer = await this.pc.createOffer();
@@ -329,15 +420,42 @@ export class ConnectionManager {
 
       const bufferDuration = audioBuffer.duration;
       if (this.nextAudioTime < this.audioCtx.currentTime) {
-        this.nextAudioTime = this.audioCtx.currentTime;
+        // Apply 80ms jitter buffer offset when queue is empty or starting
+        this.nextAudioTime = this.audioCtx.currentTime + 0.080;
       } else if (this.nextAudioTime - this.audioCtx.currentTime > 0.5) {
         console.warn(`[Audio] Drift detected: ${this.nextAudioTime - this.audioCtx.currentTime}s. Resetting queue.`);
-        this.nextAudioTime = this.audioCtx.currentTime;
+        this.nextAudioTime = this.audioCtx.currentTime + 0.080;
       }
       source.start(this.nextAudioTime);
       this.nextAudioTime += bufferDuration;
     } catch (err) {
       console.debug('[VNC Connection] Audio playback failed:', err);
+    }
+  }
+
+  /**
+   * Transmits raw payloads over the active WebSocket connection.
+   */
+  public send(payload: any): boolean {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(payload));
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Manually sets the JPEG compression quality from the client UI.
+   */
+  public setQuality(quality: number) {
+    this.lastQuality = quality;
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        type: 'quality_adjust',
+        quality: this.lastQuality,
+        scale: this.lastScale
+      }));
+      console.info(`[VNC Connection] Manual quality adjust: set quality=${quality}%, scale=${this.lastScale}`);
     }
   }
 
@@ -363,7 +481,8 @@ export class ConnectionManager {
         this.ws.send(JSON.stringify({
           type: 'quality_adjust',
           quality,
-          scale
+          scale,
+          rtt
         }));
         console.info(`[VNC Connection] Adaptive quality active: RTT=${rtt}ms. Set quality=${quality}%, scale=${scale}`);
       }
@@ -390,7 +509,13 @@ export class ConnectionManager {
       this.elCanvas?.classList.remove('hidden');
       this.elPlaceholder?.classList.add('hidden');
       this.elSidebar?.classList.remove('hidden');
-      this.elHUD?.classList.remove('hidden');
+      
+      const hudChecked = (document.getElementById('chk-hud-toggle') as HTMLInputElement)?.checked ?? true;
+      if (hudChecked) {
+        this.elHUD?.classList.remove('hidden');
+      } else {
+        this.elHUD?.classList.add('hidden');
+      }
     } else if (state === 'connecting') {
       this.elBadge.classList.add('bg-amber-500/10', 'text-amber-400', 'border', 'border-amber-500/25');
       this.elText.textContent = 'Connecting...';

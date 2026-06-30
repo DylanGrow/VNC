@@ -14,70 +14,156 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
 </head>
-<body class="h-full font-sans antialiased overflow-hidden flex flex-col">
+<body class="h-full font-sans antialiased overflow-hidden flex flex-col bg-slate-900">
 
-  <!-- ==================== HEADER ==================== -->
-  <header class="flex-none bg-slate-900/60 backdrop-blur-md border-b border-slate-800/80 px-6 py-4 flex items-center justify-between z-10">
+  <!-- ==================== HEADER / CONNECTWISE-STYLE TOP TOOLBAR ==================== -->
+  <header class="flex-none bg-slate-800 border-b border-slate-700 px-4 py-2 flex items-center justify-between z-40 shadow-md">
+    <!-- Left: ConnectWise Blue Logo & Session Name -->
     <div class="flex items-center space-x-3">
-      <div class="h-9 w-9 bg-gradient-to-tr from-brand-600 to-indigo-500 rounded-lg flex items-center justify-center shadow-lg shadow-brand-500/20">
-        <svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+      <div class="h-8 w-8 bg-brand-500 rounded flex items-center justify-center shadow-md">
+        <svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
           <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
         </svg>
       </div>
       <div>
-        <h1 class="text-lg font-bold tracking-tight text-white flex items-center">
-          Antigravity VNC
-          <span class="ml-2 text-xs font-semibold px-2 py-0.5 rounded-full bg-brand-500/10 text-brand-400 border border-brand-500/20">v1.0</span>
+        <h1 class="text-sm font-bold tracking-tight text-white flex items-center">
+          ScreenConnect Console
+          <span class="ml-2 text-[10px] font-semibold px-1.5 py-0.2 rounded bg-brand-600/30 text-brand-300 border border-brand-500/20">Active</span>
         </h1>
-        <p class="text-xs text-slate-400">High performance remote desktop</p>
+        <p class="text-[10px] text-slate-400">Connected to remote session</p>
       </div>
     </div>
 
-    <!-- Status Badges -->
-    <div class="flex items-center space-x-4">
-      <!-- Audio Toggler -->
-      <button id="btn-audio-toggle" class="hidden p-2 rounded-lg border border-slate-700 hover:bg-slate-800 text-xs font-semibold text-slate-300 transition-all flex items-center space-x-1.5">
-        <svg id="svg-audio-on" class="w-4 h-4 text-emerald-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+    <!-- Center: Floating Menu Buttons (View, Commands, Audio, Themes) -->
+    <div class="flex items-center space-x-1.5">
+      <!-- VIEW Dropdown -->
+      <div class="relative dropdown-container">
+        <button id="menu-btn-view" class="px-3 py-1.5 rounded bg-slate-700/60 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition-colors flex items-center space-x-1">
+          <span>View</span>
+          <svg class="w-3 h-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" /></svg>
+        </button>
+        <div id="menu-dropdown-view" class="dropdown-menu p-3 w-64 space-y-3">
+          <!-- Monitor Selector -->
+          <div class="space-y-1">
+            <label for="select-monitor" class="text-[11px] text-slate-400 font-medium">Active Display</label>
+            <select id="select-monitor" class="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-brand-500 text-slate-200">
+              <option value="1">Monitor 1</option>
+            </select>
+          </div>
+          <!-- Quality Slider -->
+          <div class="space-y-1">
+            <div class="flex justify-between text-[11px] text-slate-400">
+              <span>Scale Quality</span>
+              <span id="val-quality">75%</span>
+            </div>
+            <input id="slider-quality" type="range" min="30" max="95" value="75" class="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-brand-500">
+          </div>
+          <!-- Fullscreen & Diagnostics toggles -->
+          <div class="border-t border-slate-700/60 pt-2 space-y-2">
+            <button id="btn-fullscreen" class="w-full flex items-center justify-center space-x-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 py-1.5 px-2 rounded text-[11px] transition-colors border border-slate-700">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
+              </svg>
+              <span>Toggle Fullscreen</span>
+            </button>
+            <div class="flex items-center justify-between text-[11px] text-slate-300 px-1">
+              <label for="chk-hud-toggle" class="cursor-pointer select-none">Show Diagnostics</label>
+              <input type="checkbox" id="chk-hud-toggle" checked class="h-3.5 w-3.5 bg-slate-900 border-slate-700 text-brand-600 rounded focus:ring-0 focus:outline-none cursor-pointer">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- COMMANDS Dropdown -->
+      <div class="relative dropdown-container">
+        <button id="menu-btn-commands" class="px-3 py-1.5 rounded bg-slate-700/60 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition-colors flex items-center space-x-1">
+          <span>Commands</span>
+          <svg class="w-3 h-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" /></svg>
+        </button>
+        <div id="menu-dropdown-commands" class="dropdown-menu p-2.5 w-52 space-y-1.5">
+          <button id="btn-key-ctrlaltdel" class="w-full text-left px-2.5 py-1.5 hover:bg-brand-600 hover:text-white rounded text-xs text-slate-350 transition-colors">Ctrl+Alt+Del</button>
+          <button id="btn-key-alttab" class="w-full text-left px-2.5 py-1.5 hover:bg-brand-600 hover:text-white rounded text-xs text-slate-350 transition-colors">Alt+Tab</button>
+          <button id="btn-key-esc" class="w-full text-left px-2.5 py-1.5 hover:bg-brand-600 hover:text-white rounded text-xs text-slate-350 transition-colors">Escape</button>
+          <button id="btn-key-tab" class="w-full text-left px-2.5 py-1.5 hover:bg-brand-600 hover:text-white rounded text-xs text-slate-350 transition-colors">Tab</button>
+          <button id="btn-key-enter" class="w-full text-left px-2.5 py-1.5 hover:bg-brand-600 hover:text-white rounded text-xs text-slate-350 transition-colors">Enter</button>
+          <button id="btn-key-backspace" class="w-full text-left px-2.5 py-1.5 hover:bg-brand-600 hover:text-white rounded text-xs text-slate-350 transition-colors">Backspace</button>
+        </div>
+      </div>
+
+      <!-- SOUND Button -->
+      <button id="btn-audio-toggle" class="hidden px-3 py-1.5 rounded bg-slate-700/60 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition-all flex items-center space-x-1.5">
+        <svg id="svg-audio-on" class="w-3.5 h-3.5 text-brand-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
         </svg>
-        <svg id="svg-audio-off" class="w-4 h-4 text-slate-500 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <svg id="svg-audio-off" class="w-3.5 h-3.5 text-slate-500 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15zm12.95-6.536l-5.656 5.656m0-5.656l5.656 5.656" />
         </svg>
         <span id="txt-audio">Audio ON</span>
       </button>
 
-      <div id="status-badge" class="flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-medium bg-red-500/10 text-red-400 border border-red-500/20 transition-all duration-300">
-        <span class="h-2 w-2 rounded-full bg-red-500 animate-pulse"></span>
+      <!-- THEMES Dropdown -->
+      <div class="relative dropdown-container">
+        <button id="menu-btn-themes" class="px-3 py-1.5 rounded bg-slate-700/60 hover:bg-slate-700 text-xs font-semibold text-slate-200 border border-slate-700 transition-colors flex items-center space-x-1">
+          <span>Theme</span>
+          <svg class="w-3 h-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" /></svg>
+        </button>
+        <div id="menu-dropdown-themes" class="dropdown-menu p-3 w-40 space-y-2">
+          <button id="theme-indigo" class="w-full text-left text-xs text-indigo-400 hover:bg-indigo-950/40 p-1.5 rounded border border-transparent">Indigo Focus</button>
+          <button id="theme-emerald" class="w-full text-left text-xs text-emerald-400 hover:bg-emerald-950/40 p-1.5 rounded border border-transparent">Emerald Calm</button>
+          <button id="theme-rose" class="w-full text-left text-xs text-rose-400 hover:bg-rose-950/40 p-1.5 rounded border border-transparent">Rose Accent</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Connection Status & Collapsible Panel Controls -->
+    <div class="flex items-center space-x-2">
+      <div id="status-badge" class="flex items-center space-x-1.5 px-2.5 py-1 rounded text-[11px] font-medium bg-red-500/10 text-red-400 border border-red-500/20 transition-all duration-300">
+        <span class="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse"></span>
         <span id="status-text">Disconnected</span>
       </div>
 
-      <button id="btn-logout" class="hidden px-3 py-1.5 rounded-lg border border-slate-700 hover:bg-slate-800 text-xs font-semibold transition-colors duration-150">
-        Sign Out
+      <!-- Help Dialog Toggle -->
+      <button id="btn-help" class="p-1.5 rounded bg-slate-700 hover:bg-slate-650 text-slate-300 transition-colors">
+        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      </button>
+
+      <!-- Toggle Collapsible Sidebar/Drawer -->
+      <button id="btn-toggle-helper" class="p-1.5 rounded bg-slate-700 hover:bg-slate-650 text-slate-300 transition-colors flex items-center space-x-1 text-xs font-semibold border border-slate-600">
+        <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+        <span>Tools</span>
+      </button>
+
+      <button id="btn-logout" class="hidden px-2.5 py-1.5 rounded bg-red-700 hover:bg-red-600 text-xs font-semibold text-white transition-colors">
+        Disconnect
       </button>
     </div>
   </header>
 
-  <!-- ==================== MAIN DASHBOARD ==================== -->
+  <!-- ==================== MAIN DASHBOARD CONTENT ==================== -->
   <main class="flex-1 flex overflow-hidden relative">
 
-    <!-- Screen Canvas area -->
-    <div class="flex-1 bg-slate-950 flex items-center justify-center p-6 overflow-auto relative group">
+    <!-- Screen Canvas viewport (Takes maximum width/height) -->
+    <div class="flex-1 bg-slate-950 flex items-center justify-center p-4 overflow-auto relative group">
       
       <!-- Canvas Wrapper for fitting -->
-      <div id="canvas-container" class="relative max-w-full max-h-full aspect-video shadow-2xl rounded-xl border border-slate-800 bg-slate-900 overflow-hidden flex items-center justify-center">
+      <div id="canvas-container" class="relative max-w-full max-h-full aspect-video shadow-2xl rounded border border-slate-800 bg-slate-900 overflow-hidden flex items-center justify-center">
         <!-- VNC Render Target -->
         <canvas id="vnc-canvas" class="max-w-full max-h-full cursor-none hidden"></canvas>
 
         <!-- No Connection Placeholder -->
         <div id="canvas-placeholder" class="text-center p-8 space-y-4">
-          <div class="mx-auto w-16 h-16 rounded-full bg-slate-800/80 flex items-center justify-center border border-slate-700">
-            <svg class="w-8 h-8 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <div class="mx-auto w-12 h-12 rounded-full bg-slate-800/85 flex items-center justify-center border border-slate-750">
+            <svg class="w-6 h-6 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
               <path stroke-linecap="round" stroke-linejoin="round" d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728m-9.9-2.829a5 5 0 010-7.07m7.072 0a5 5 0 010 7.07M13 12a1 1 0 11-2 0 1 1 0 012 0z" />
             </svg>
           </div>
           <div>
-            <h3 class="text-md font-semibold text-slate-300">No Active Stream</h3>
-            <p class="text-xs text-slate-500 mt-1 max-w-xs">Log in and establish a WebSocket connection to stream the host screen.</p>
+            <h3 class="text-sm font-semibold text-slate-300">Console Ready</h3>
+            <p class="text-[11px] text-slate-500 mt-1 max-w-xs">Verify credentials and unlock console to start ScreenConnect.</p>
           </div>
         </div>
 
@@ -89,9 +175,9 @@
         </div>
       </div>
 
-      <!-- Real-time HUD Metrics overlay (Left aligned, premium styled) -->
-      <div id="metrics-hud" class="absolute bottom-10 left-10 hidden bg-slate-900/80 backdrop-blur-md border border-slate-800 p-4 rounded-xl shadow-xl space-y-2.5 w-64 text-xs font-mono transition-opacity duration-300 pointer-events-none z-10">
-        <h4 class="text-xs font-bold text-slate-400 uppercase tracking-widest border-b border-slate-800 pb-1.5 font-sans">Diagnostics</h4>
+      <!-- Real-time HUD Metrics overlay (Floating diagnostics inside canvas area) -->
+      <div id="metrics-hud" class="absolute bottom-6 left-6 hidden bg-slate-900/90 backdrop-blur border border-slate-800 p-3 rounded shadow-xl space-y-2 w-56 text-[10px] font-mono transition-opacity duration-300 pointer-events-none z-10">
+        <h4 class="text-[9px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-800 pb-1 font-sans">Diagnostics</h4>
         <div class="flex justify-between">
           <span class="text-slate-400">Protocol:</span>
           <span id="hud-protocol" class="text-indigo-400 font-semibold">WS (TCP)</span>
@@ -112,70 +198,47 @@
           <span class="text-slate-400">Frame Drops:</span>
           <span id="hud-drops" class="text-rose-400 font-semibold">0</span>
         </div>
+        <div class="border-t border-slate-800/60 pt-2 font-sans">
+          <span class="text-slate-400 block mb-1 text-[9px] uppercase tracking-wider font-bold">Latency Trend (30s)</span>
+          <canvas id="sparkline-canvas" class="w-full h-8 bg-slate-950/40 rounded border border-slate-800/80"></canvas>
+        </div>
       </div>
     </div>
 
-    <!-- ==================== SIDEBAR CONTROL PANEL ==================== -->
-    <aside id="control-panel" class="hidden w-80 bg-slate-900/40 border-l border-slate-800 p-6 flex flex-col justify-between overflow-y-auto">
-      <div class="space-y-6">
-        <!-- Section: Connection Parameters -->
-        <div class="space-y-3">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Display Controls</h3>
-          
-          <!-- Monitor Selector -->
-          <div class="space-y-1">
-            <label for="select-monitor" class="text-xs text-slate-400">Active Screen</label>
-            <select id="select-monitor" class="w-full bg-slate-850 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-500 transition-colors">
-              <option value="1">Monitor 1</option>
-            </select>
-          </div>
+    <!-- ==================== COLLAPSIBLE HELPER PANEL (RIGHT DRAWER) ==================== -->
+    <aside id="helper-panel" class="w-72 bg-slate-900/95 border-l border-slate-800 p-4 flex flex-col justify-between overflow-y-auto hidden">
+      <div class="space-y-5">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-350">Clipboard Sharing</h3>
+          <span class="text-[9px] text-slate-500 font-mono">Sync Mode</span>
+        </div>
 
-          <!-- Quality Slider -->
-          <div class="space-y-1">
-            <div class="flex justify-between text-xs text-slate-400">
-              <span>JPEG Quality</span>
-              <span id="val-quality">75%</span>
-            </div>
-            <input id="slider-quality" type="range" min="30" max="95" value="75" class="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-brand-500">
+        <div class="bg-slate-950/60 rounded border border-slate-800 p-2.5 space-y-2">
+          <textarea id="txt-clipboard" rows="4" placeholder="Clipboard texts sync automatically here. Use buttons to push or pull text contents to remote Host." class="w-full bg-transparent border-0 resize-none text-[11px] focus:ring-0 p-0 text-slate-300 placeholder-slate-600 focus:outline-none font-mono"></textarea>
+          
+          <div class="flex space-x-2 border-t border-slate-800 pt-2">
+            <button id="btn-clipboard-send" class="flex-1 bg-brand-600 hover:bg-brand-500 text-white font-semibold py-1 px-1.5 rounded text-[10px] transition-colors">
+              Send to Host
+            </button>
+            <button id="btn-clipboard-recv" class="flex-1 bg-slate-800 hover:bg-slate-750 text-slate-300 font-semibold py-1 px-1.5 rounded text-[10px] transition-colors">
+              Fetch from Host
+            </button>
           </div>
         </div>
 
-        <!-- Section: Interactive Features -->
-        <div class="space-y-3 border-t border-slate-800 pt-6">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Clipboard Sync</h3>
-          
-          <div class="bg-slate-950/60 rounded-lg border border-slate-800 p-3 space-y-2">
-            <textarea id="txt-clipboard" rows="3" placeholder="Type text to send to host, or click paste to fetch from host..." class="w-full bg-transparent border-0 resize-none text-xs focus:ring-0 p-0 text-slate-300 placeholder-slate-600 focus:outline-none font-mono"></textarea>
-            
-            <div class="flex space-x-2 border-t border-slate-850 pt-2">
-              <button id="btn-clipboard-send" class="flex-1 bg-brand-600 hover:bg-brand-500 text-white font-semibold py-1 px-2 rounded text-xs transition-colors duration-150">
-                Push To Host
-              </button>
-              <button id="btn-clipboard-recv" class="flex-1 bg-slate-800 hover:bg-slate-750 text-slate-300 font-semibold py-1 px-2 rounded text-xs transition-colors duration-150">
-                Pull From Host
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Section: Utilities -->
-        <div class="space-y-2 border-t border-slate-800 pt-6">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">Virtual Key Actions</h3>
-          <div class="flex flex-wrap gap-1.5">
-            <button id="btn-key-ctrlaltdel" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded text-xs text-slate-300 font-semibold cursor-pointer active:scale-95 transition-all">Ctrl+Alt+Del</button>
-            <button id="btn-key-alttab" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded text-xs text-slate-300 font-semibold cursor-pointer active:scale-95 transition-all">Alt+Tab</button>
-            <button id="btn-key-esc" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded text-xs text-slate-300 font-semibold cursor-pointer active:scale-95 transition-all">Escape</button>
+        <!-- Connection Settings Info Card -->
+        <div class="p-3 bg-slate-800/40 border border-slate-800 rounded space-y-2">
+          <h4 class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Session Information</h4>
+          <div class="text-[10px] space-y-1.5 text-slate-400">
+            <div class="flex justify-between"><span class="text-slate-400">Active Display:</span><span id="info-monitor" class="text-slate-300">1</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Encoding:</span><span class="text-slate-300">JPEG/WebRTC</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Audio Channels:</span><span class="text-slate-300">Stereo Loopback</span></div>
           </div>
         </div>
       </div>
 
-      <div class="border-t border-slate-800 pt-6 mt-6 space-y-2">
-        <button id="btn-fullscreen" class="w-full flex items-center justify-center space-x-2 bg-slate-800 hover:bg-slate-750 text-slate-200 font-semibold py-2 px-3 rounded-lg text-sm transition-colors duration-150">
-          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
-          </svg>
-          <span>Toggle Fullscreen</span>
-        </button>
+      <div class="text-center text-[9px] text-slate-500 font-mono border-t border-slate-800 pt-3 mt-4">
+        ScreenConnect VNC v1.0.0
       </div>
     </aside>
 
@@ -183,41 +246,80 @@
 
   <!-- ==================== SECURITY AUTHENTICATION MODAL ==================== -->
   <div id="auth-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-lg flex items-center justify-center z-50">
-    <div class="w-full max-w-md bg-slate-900 border border-slate-800/80 p-8 rounded-2xl shadow-2xl space-y-6 mx-4">
+    <div class="w-full max-w-sm bg-slate-900 border border-slate-800 p-6 rounded-lg shadow-2xl space-y-4 mx-4">
       <div class="text-center space-y-2">
-        <div class="mx-auto w-12 h-12 bg-brand-500/10 border border-brand-500/25 rounded-xl flex items-center justify-center text-brand-400">
-          <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <div class="mx-auto w-10 h-10 bg-brand-500/10 border border-brand-500/25 rounded-md flex items-center justify-center text-brand-400 shadow-sm">
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
           </svg>
         </div>
-        <h2 class="text-xl font-bold text-white">System Authentication</h2>
-        <p class="text-xs text-slate-400">Enter server credentials to access remote display</p>
+        <h2 class="text-base font-bold text-white">Unlock Session Console</h2>
+        <p class="text-[10px] text-slate-400">Provide administrative access credentials below</p>
       </div>
 
-      <form id="auth-form" class="space-y-4">
+      <form id="auth-form" class="space-y-3.5">
         <div class="space-y-1">
-          <label for="username" class="text-xs text-slate-400">Username</label>
-          <input type="text" id="username" required value="admin" class="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 focus:border-brand-500 rounded-lg px-4 py-2.5 text-sm focus:outline-none transition-all duration-150">
+          <label for="username" class="text-[10px] text-slate-400 uppercase tracking-wider">Username</label>
+          <input type="text" id="username" required value="admin" class="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 focus:border-brand-500 rounded px-3 py-2 text-xs focus:outline-none transition-all">
         </div>
         <div class="space-y-1">
-          <label for="password" class="text-xs text-slate-400">Security Password</label>
-          <input type="password" id="password" required placeholder="••••••••" class="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 focus:border-brand-500 rounded-lg px-4 py-2.5 text-sm focus:outline-none transition-all duration-150">
+          <label for="password" class="text-[10px] text-slate-400 uppercase tracking-wider">Password</label>
+          <input type="password" id="password" required placeholder="••••••••" class="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 focus:border-brand-500 rounded px-3 py-2 text-xs focus:outline-none transition-all">
         </div>
         
         <!-- Viewer Role Toggle -->
         <div class="flex items-center space-x-2 pt-1">
-          <input type="checkbox" id="chk-viewer" class="h-4 w-4 bg-slate-950 border-slate-800 text-brand-600 rounded focus:ring-0 focus:outline-none cursor-pointer">
-          <label for="chk-viewer" class="text-xs text-slate-400 cursor-pointer select-none">Connect in read-only (Viewer) mode</label>
+          <input type="checkbox" id="chk-viewer" class="h-3.5 w-3.5 bg-slate-950 border-slate-800 text-brand-600 rounded focus:ring-0 focus:outline-none cursor-pointer">
+          <label for="chk-viewer" class="text-[10px] text-slate-400 cursor-pointer select-none">Unlock in read-only (Viewer) mode</label>
         </div>
         
-        <div id="auth-error" class="hidden text-xs text-rose-400 text-center bg-rose-500/5 border border-rose-500/15 py-2 px-3 rounded-lg">
+        <div id="auth-error" class="hidden text-[10px] text-rose-400 text-center bg-rose-500/5 border border-rose-500/15 py-1.5 px-2.5 rounded">
           Invalid username or password
         </div>
 
-        <button type="submit" class="w-full bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-semibold py-3 rounded-lg text-sm shadow-lg shadow-brand-600/25 active:scale-[0.98] transition-all duration-150">
+        <button type="submit" class="w-full bg-brand-600 hover:bg-brand-500 text-white font-semibold py-2 rounded text-xs shadow-md active:scale-[0.98] transition-all">
           Unlock Console
         </button>
       </form>
+    </div>
+  </div>
+
+  <!-- ==================== HELP CHEAT SHEET MODAL ==================== -->
+  <div id="help-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center z-50 hidden">
+    <div class="w-full max-w-md bg-slate-900 border border-slate-800 p-6 rounded-lg shadow-2xl space-y-4 mx-4">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+        <h3 class="text-sm font-bold text-white flex items-center">
+          <svg class="w-4 h-4 text-brand-400 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          Keyboard Mappings & Failsafes
+        </h3>
+        <button id="btn-help-close" class="text-slate-500 hover:text-slate-300 font-bold focus:outline-none">✕</button>
+      </div>
+
+      <div class="space-y-3.5 text-[11px]">
+        <div class="space-y-1">
+          <h4 class="font-bold text-slate-300 uppercase tracking-wider text-[9px]">Host Interactivity</h4>
+          <p class="text-slate-400 leading-relaxed">All standard printable ASCII keystrokes and coordinates are validated and transmitted in real-time. Modifier key states are synced to support keyboard combinations.</p>
+        </div>
+
+        <div class="space-y-1">
+          <h4 class="font-bold text-slate-300 uppercase tracking-wider text-[9px]">Failsafe Mechanisms</h4>
+          <div class="bg-slate-950/50 p-2.5 rounded border border-slate-800/60 font-mono space-y-1 text-[10px] text-slate-400">
+            <div>• <span class="text-brand-400">pyautogui.FAILSAFE = True</span>: Move the host mouse pointer to any of the 4 screen corners to instantly halt all remote inputs.</div>
+            <div>• <span class="text-brand-400">Alt+Tab & Win Keys</span>: Prohibited by server ACL policy to prevent sandbox escapes.</div>
+          </div>
+        </div>
+
+        <div class="space-y-1">
+          <h4 class="font-bold text-slate-300 uppercase tracking-wider text-[9px]">Virtual Control Buttons</h4>
+          <p class="text-slate-400 leading-relaxed">Use the virtual key actions in the Commands top menu to issue system shortcut combos safely.</p>
+        </div>
+      </div>
+
+      <button id="btn-help-ok" class="w-full bg-brand-600 hover:bg-brand-500 text-white font-semibold py-2 rounded text-xs transition-colors active:scale-95">
+        Close Window
+      </button>
     </div>
   </div>
 

@@ -2,6 +2,8 @@
 from fastapi import FastAPI, WebSocket, HTTPException, Request, Depends, status
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
 import json
 import logging
 import asyncio
@@ -10,6 +12,7 @@ import uuid
 import os
 import secrets
 import time
+import signal
 
 import ipaddress
 from auth import issue_token, verify_token, verify_token_string, TokenData, track_failed_attempt, is_ip_banned, clear_failed_attempts
@@ -48,6 +51,7 @@ audit_logger = AuditLogger()
 webrtc_manager = WebRTCSessionManager()
 LAST_INPUT_TIME = 0.0
 ACTIVE_WEBSOCKETS = {}
+ACTIVE_WEBSOCKET_LOCKS = {}
 REMOTE_INPUT_LOCKED = False
 EVENT_LOOP = None
 
@@ -75,50 +79,121 @@ def set_remote_input_lock(locked: bool):
 
 SYSTEM_TRAY = None
 
-@app.on_event("startup")
-def start_system_tray():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global SYSTEM_TRAY, EVENT_LOOP
     EVENT_LOOP = asyncio.get_running_loop()
+
+    # Graceful IPC signal traps
+    original_sigint = signal.getsignal(signal.SIGINT)
+    original_sigterm = signal.getsignal(signal.SIGTERM)
+
+    def handle_signal(sig, frame):
+        logger.info(f"Signal {sig} received. Commencing pre-exit graceful cleanup...")
+        
+        # 1. Stop active WebRTC connections
+        try:
+            webrtc_manager.cleanup()
+        except Exception as e:
+            logger.debug(f"WebRTC cleanup on signal failed: {e}")
+
+        # 1.5. Release screen capture display handles
+        try:
+            screen_capture.close()
+        except Exception as e:
+            logger.debug(f"Screen capture close on signal failed: {e}")
+            
+        # 2. Release modifier keys
+        try:
+            import pyautogui
+            for key in ["ctrl", "shift", "alt", "win"]:
+                pyautogui.keyUp(key)
+        except Exception as e:
+            logger.debug(f"pyautogui keyup on signal failed: {e}")
+            
+        # 3. Stop system tray
+        global SYSTEM_TRAY
+        if SYSTEM_TRAY and SYSTEM_TRAY.icon:
+            try:
+                SYSTEM_TRAY.icon.stop()
+            except Exception:
+                pass
+                
+        # 4. Disconnect all operator connections
+        disconnect_all_operators()
+        
+        # Forward to original handler to allow uvicorn's server loop to finalize
+        if sig == signal.SIGINT and callable(original_sigint):
+            original_sigint(sig, frame)
+        elif sig == signal.SIGTERM and callable(original_sigterm):
+            original_sigterm(sig, frame)
+        else:
+            import sys
+            sys.exit(0)
+
+    try:
+        signal.signal(signal.SIGINT, handle_signal)
+        signal.signal(signal.SIGTERM, handle_signal)
+    except ValueError as e:
+        logger.warning(f"Could not register custom signal handlers: {e}")
+
+    def trigger_graceful_exit():
+        logger.info("System Tray: Commencing graceful shutdown...")
+        global EVENT_LOOP
+        if EVENT_LOOP is None:
+            import sys
+            sys.exit(0)
+            
+        def stop_loop():
+            # 1. Stop active WebRTC connections
+            try:
+                webrtc_manager.cleanup()
+            except Exception as e:
+                logger.debug(f"WebRTC cleanup failed on exit: {e}")
+
+            # 1.5. Release screen capture display handles
+            try:
+                screen_capture.close()
+            except Exception as e:
+                logger.debug(f"Screen capture close failed on exit: {e}")
+                
+            # 2. Release modifier keys
+            try:
+                import pyautogui
+                for key in ["ctrl", "shift", "alt", "win"]:
+                    pyautogui.keyUp(key)
+            except Exception as e:
+                logger.debug(f"pyautogui keyup failed on exit: {e}")
+                
+            # 3. Disconnect all operator connections
+            disconnect_all_operators()
+            
+            # 4. Stop uvicorn event loop
+            EVENT_LOOP.stop()
+            
+        EVENT_LOOP.call_soon_threadsafe(stop_loop)
+
     SYSTEM_TRAY = SystemTrayApp(
         disconnect_all_callback=disconnect_all_operators,
-        input_lock_callback=set_remote_input_lock
+        input_lock_callback=set_remote_input_lock,
+        exit_callback=trigger_graceful_exit
     )
     SYSTEM_TRAY.run()
 
-@app.on_event("shutdown")
-def stop_system_tray():
-    global SYSTEM_TRAY
+    yield
+
+    # Shutdown logic
     if SYSTEM_TRAY and SYSTEM_TRAY.icon:
         logger.info("Stopping system tray applet...")
         try:
             SYSTEM_TRAY.icon.stop()
         except Exception as e:
             logger.debug(f"Failed to stop system tray icon: {e}")
-
-async def audio_sender_task(websocket: WebSocket, conn_id: str):
-    audio_capture = AudioCapture()
     try:
-        while True:
-            chunk = audio_capture.read_chunk(100)
-            if chunk:
-                import base64
-                encoded_audio = base64.b64encode(chunk).decode("utf-8")
-                await websocket.send_json({
-                    "type": "audio",
-                    "data": encoded_audio,
-                    "sampleRate": audio_capture.sample_rate,
-                    "channels": audio_capture.channels
-                })
-            await asyncio.sleep(0.1)
-    except asyncio.CancelledError:
-        pass
+        screen_capture.close()
     except Exception as e:
-        logger.debug(f"Audio sender error on connection {conn_id}: {e}")
-    finally:
-        audio_capture.cleanup()
+        logger.debug(f"Failed to close screen capture handle on shutdown: {e}")
 
-@app.on_event("shutdown")
-def release_keys_on_shutdown():
     logger.info("VNC Server shutting down. Releasing modifier keys...")
     try:
         import pyautogui
@@ -126,6 +201,39 @@ def release_keys_on_shutdown():
             pyautogui.keyUp(key)
     except Exception as e:
         logger.debug(f"Failed to release keys on shutdown: {e}")
+
+app.router.lifespan_context = lifespan
+
+async def audio_sender_task(websocket: WebSocket, conn_id: str):
+    audio_capture = AudioCapture()
+    try:
+        while True:
+            start_time = time.time()
+            chunk = await asyncio.to_thread(audio_capture.read_chunk, 100)
+            if chunk:
+                import base64
+                encoded_audio = base64.b64encode(chunk).decode("utf-8")
+                lock = ACTIVE_WEBSOCKET_LOCKS.get(conn_id)
+                payload = {
+                    "type": "audio",
+                    "data": encoded_audio,
+                    "sampleRate": audio_capture.sample_rate,
+                    "channels": audio_capture.channels
+                }
+                if lock:
+                    async with lock:
+                        await websocket.send_json(payload)
+                else:
+                    await websocket.send_json(payload)
+            elapsed = time.time() - start_time
+            sleep_time = max(0.005, 0.1 - elapsed)
+            await asyncio.sleep(sleep_time)
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.debug(f"Audio sender error on connection {conn_id}: {e}")
+    finally:
+        audio_capture.cleanup()
 
 # Security Header Enforcement Middleware
 @app.middleware("http")
@@ -151,11 +259,29 @@ async def add_security_headers(request: Request, call_next):
 # CORS Policy - Restrict origin in production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex="https?://(localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0)(:\\d+)?",
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+class ApiPathRewriteMiddleware:
+    """Middleware to strip the /api prefix from incoming paths for API and WebSocket routing compatibility."""
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            path = scope.get("path", "")
+            if path.startswith("/api/"):
+                scope["path"] = path[4:]
+                if "raw_path" in scope:
+                    raw_path = scope["raw_path"].decode("latin1")
+                    if raw_path.startswith("/api/"):
+                        scope["raw_path"] = raw_path[4:].encode("latin1")
+        await self.app(scope, receive, send)
+
+app.add_middleware(ApiPathRewriteMiddleware)
 
 # ------------------ Auth Endpoints ------------------
 @app.post("/auth/login")
@@ -203,12 +329,19 @@ async def login(credentials: dict, request: Request):
     )
 
 @app.post("/auth/logout")
-async def logout(request: Request):
+async def logout(request: Request, current_user: TokenData = Depends(verify_token)):
     """Wipes the session cookie and signs out the user."""
     client_ip = request.client.host if request.client else "unknown"
-    await audit_logger.log_event("logout", {"ip": client_ip})
+    await audit_logger.log_event("logout", {"username": current_user.sub, "ip": client_ip})
     response = JSONResponse(content={"status": "success"})
-    response.delete_cookie(key="access_token")
+    is_secure = (request.url.scheme == "https") or (os.getenv("ENV", "development").lower() == "production")
+    response.delete_cookie(
+        key="access_token",
+        path="/",
+        secure=is_secure,
+        httponly=True,
+        samesite="strict"
+    )
     return response
 
 @app.post("/auth/refresh")
@@ -243,27 +376,116 @@ async def list_monitors(current_user: TokenData = Depends(verify_token)):
 # ------------------ Screen Sharing WebSocket ------------------
 async def client_reader(websocket: WebSocket, session_config: dict):
     """Background reader task to receive and handle client messages on the socket."""
+    conn_id = session_config.get("conn_id", "unknown")
     try:
         while True:
             data = await websocket.receive_text()
-            msg = json.loads(data)
-            if msg.get("type") == "quality_adjust":
-                session_config["quality"] = int(msg.get("quality", 75))
-                session_config["resolution_scale"] = float(msg.get("scale", 1.0))
-            elif msg.get("type") == "pong":
-                session_config["last_pong_time"] = time.time()
-            elif msg.get("type") == "webrtc_offer":
-                offer_sdp = msg.get("sdp")
-                offer_type = msg.get("offer_type", "offer")
-                answer = await webrtc_manager.handle_offer(offer_sdp, offer_type)
-                await websocket.send_json({
-                    "type": "webrtc_answer",
-                    "answer": answer
-                })
+            try:
+                msg = json.loads(data)
+                if not isinstance(msg, dict):
+                    logger.warning(f"Socket reader: Received non-dict packet from connection {conn_id}")
+                    continue
+                
+                msg_type = msg.get("type")
+                if msg_type == "quality_adjust":
+                    try:
+                        quality = int(msg.get("quality", 75))
+                        session_config["quality"] = max(1, min(100, quality))
+                    except (ValueError, TypeError):
+                        pass
+                    
+                    try:
+                        scale = float(msg.get("scale", 1.0))
+                        session_config["resolution_scale"] = max(0.1, min(2.0, scale))
+                    except (ValueError, TypeError):
+                        pass
+                        
+                    if "rtt" in msg:
+                        try:
+                            session_config["rtt"] = float(msg["rtt"])
+                        except (ValueError, TypeError):
+                            pass
+                elif msg_type == "pong":
+                    session_config["last_pong_time"] = time.time()
+                    if "rtt" in msg:
+                        try:
+                            session_config["rtt"] = float(msg["rtt"])
+                        except (ValueError, TypeError):
+                            pass
+                elif msg_type == "webrtc_offer":
+                    offer_sdp = msg.get("sdp")
+                    offer_type = msg.get("offer_type", "offer")
+                    if isinstance(offer_sdp, str):
+                        webrtc_audio_capture = AudioCapture()
+                        answer = await webrtc_manager.handle_offer(
+                            offer_sdp,
+                            offer_type,
+                            screen_capture=screen_capture,
+                            audio_capture=webrtc_audio_capture,
+                            conn_id=conn_id
+                        )
+                        lock = ACTIVE_WEBSOCKET_LOCKS.get(conn_id)
+                        if lock:
+                            async with lock:
+                                await websocket.send_json({
+                                    "type": "webrtc_answer",
+                                    "answer": answer
+                                })
+                        else:
+                            await websocket.send_json({
+                                "type": "webrtc_answer",
+                                "answer": answer
+                            })
+                elif msg_type in ["mouse_move", "mouse_down", "mouse_up", "click", "double_click", "scroll", "key_press", "key_release", "key_combo"]:
+                    current_user = session_config.get("user")
+                    if current_user:
+                        if REMOTE_INPUT_LOCKED and current_user.role != "administrator":
+                            continue
+
+                        if current_user.role == "viewer":
+                            continue
+
+                        monitor_id = msg.get("monitorId", 1)
+                        monitors = screen_capture.get_monitors()
+                        if monitor_id < 1 or monitor_id >= len(monitors):
+                            monitor_id = 1
+                        w = monitors[monitor_id]["width"]
+                        h = monitors[monitor_id]["height"]
+
+                        try:
+                            global LAST_INPUT_TIME
+                            LAST_INPUT_TIME = time.time()
+
+                            await asyncio.to_thread(input_validator.validate_and_execute, msg, w, h)
+                            metrics_collector.total_inputs += 1
+
+                            if msg_type in ["mouse_move", "click", "double_click", "mouse_down", "mouse_up"]:
+                                presence_payload = {
+                                    "type": "presence",
+                                    "username": current_user.sub,
+                                    "x": msg.get("x", 0.0),
+                                    "y": msg.get("y", 0.0),
+                                    "role": current_user.role
+                                }
+                                for peer_id, ws in list(ACTIVE_WEBSOCKETS.items()):
+                                    if peer_id != conn_id:
+                                        lock = ACTIVE_WEBSOCKET_LOCKS.get(peer_id)
+                                        if lock:
+                                            async def safe_send(w_conn, payload, lk):
+                                                async with lk:
+                                                    try:
+                                                        await w_conn.send_json(payload)
+                                                    except Exception:
+                                                        pass
+                                            asyncio.create_task(safe_send(ws, presence_payload, lock))
+                        except Exception as e:
+                            logger.debug(f"WebSocket input execution failed: {e}")
+            except json.JSONDecodeError as e:
+                logger.warning(f"Socket reader: Failed to parse JSON message: {e}")
+            except Exception as e:
+                logger.error(f"Socket reader: Error processing client packet: {e}")
     except asyncio.CancelledError:
         pass
-    except Exception as e:
-        logger.debug(f"WebSocket client reader exception: {e}")
 
 @app.websocket("/ws/screen/{monitor_id}")
 async def websocket_screen(websocket: WebSocket, monitor_id: int = 1):
@@ -271,15 +493,22 @@ async def websocket_screen(websocket: WebSocket, monitor_id: int = 1):
     client_ip = websocket.client[0] if websocket.client else "unknown"
     conn_id = str(uuid.uuid4())
 
+    # Protect against CSWSH: Validate Origin header
+    origin = websocket.headers.get("origin")
+    if origin:
+        from urllib.parse import urlparse
+        parsed_origin = urlparse(origin)
+        origin_host = parsed_origin.netloc.lower()
+        host = websocket.headers.get("host", "").lower()
+        if host and origin_host != host:
+            is_local = "localhost" in origin_host or "127.0.0.1" in origin_host or "0.0.0.0" in origin_host
+            if not is_local:
+                logger.warning(f"CSWSH blocked: Origin {origin} does not match Host {host}")
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Origin verification failed")
+                return
+
     # Extract token from cookies or query parameters
-    cookie_header = websocket.headers.get("cookie")
-    token = None
-    if cookie_header:
-        try:
-            cookies = dict(item.split("=", 1) for item in cookie_header.split("; ") if "=" in item)
-            token = cookies.get("access_token")
-        except Exception:
-            pass
+    token = websocket.cookies.get("access_token")
 
     if not token:
         token = websocket.query_params.get("token")
@@ -289,7 +518,7 @@ async def websocket_screen(websocket: WebSocket, monitor_id: int = 1):
         return
         
     try:
-        verify_token_string(token)
+        current_user = verify_token_string(token)
     except HTTPException:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid or expired token")
         return
@@ -299,32 +528,36 @@ async def websocket_screen(websocket: WebSocket, monitor_id: int = 1):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="IP limit or capacity exceeded")
         return
 
-    await websocket.accept()
-    logger.info(f"WebSocket connection {conn_id} accepted from {client_ip} on monitor {monitor_id}")
-    await audit_logger.log_event("session_start", {"ip": client_ip, "conn_id": conn_id})
-
-    # Initialize dynamic session configurations
-    session_config = {
-        "quality": 75,
-        "resolution_scale": 1.0,
-        "last_pong_time": time.time()
-    }
-
-    ACTIVE_WEBSOCKETS[conn_id] = websocket
-
-    # Launch non-blocking concurrent reader task
-    reader_task = asyncio.create_task(client_reader(websocket, session_config))
-    # Launch concurrent audio capture task
-    audio_task = asyncio.create_task(audio_sender_task(websocket, conn_id))
-    
-    # Initialize H.264 video encoder
-    video_encoder = VideoEncoder(fps=30)
-    
-    frame_sequence = 0
-    idle_frames = 0
-    sleep_delay = 0.033
-
+    reader_task = None
+    audio_task = None
+    video_encoder = None
     try:
+        await websocket.accept()
+        logger.info(f"WebSocket connection {conn_id} accepted from {client_ip} on monitor {monitor_id}")
+        await audit_logger.log_event("session_start", {"ip": client_ip, "conn_id": conn_id})
+
+        # Initialize dynamic session configurations
+        session_config = {
+            "conn_id": conn_id,
+            "quality": 75,
+            "resolution_scale": 1.0,
+            "last_pong_time": time.time(),
+            "user": current_user
+        }
+
+        conn_lock = asyncio.Lock()
+        ACTIVE_WEBSOCKETS[conn_id] = websocket
+        ACTIVE_WEBSOCKET_LOCKS[conn_id] = conn_lock
+
+        # Launch non-blocking concurrent reader task
+        reader_task = asyncio.create_task(client_reader(websocket, session_config))
+        # Launch concurrent audio capture task
+        audio_task = asyncio.create_task(audio_sender_task(websocket, conn_id))
+        
+        frame_sequence = 0
+        idle_frames = 0
+        sleep_delay = 0.033
+
         while True:
             # Check for silent zombies (no heartbeat for 15 seconds)
             last_pong = session_config.get("last_pong_time", time.time())
@@ -338,86 +571,94 @@ async def websocket_screen(websocket: WebSocket, monitor_id: int = 1):
             target_w = int(1280 * scale)
             target_h = int(720 * scale)
 
-            video_frame = None
-            if video_encoder.available:
-                pil_img = screen_capture.capture_pil(monitor_id, resolution=(target_w, target_h))
-                if pil_img:
-                    video_frame = video_encoder.encode_frame(pil_img)
-            
-            if video_frame:
-                import base64
-                encoded_video = base64.b64encode(video_frame).decode("utf-8")
-                await websocket.send_json({
-                    "type": "video_frame",
-                    "sequence": frame_sequence,
-                    "data": encoded_video,
-                    "timestamp": datetime.now(timezone.utc).isoformat()
-                })
-                metrics_collector.log_frame(len(encoded_video))
-                frame_sequence += 1
-                idle_frames = 0
-                sleep_delay = 0.033
+            # Dynamic RTT frame rate adaptation: slow down capturing when RTT is high to avoid queue bloat
+            rtt = session_config.get("rtt", 0.0)
+            if rtt > 250.0:
+                base_delay = 0.100  # 10 FPS
+            elif rtt > 150.0:
+                base_delay = 0.066  # 15 FPS
             else:
-                # Capture screen image frame (returns Base64 string, has_changed status, and tile coordinates)
-                frame_data, has_changed, tx, ty, tw, th, is_delta = screen_capture.capture(
-                    monitor_id, quality=quality, resolution=(target_w, target_h)
-                )
-                
-                if has_changed or (time.time() - LAST_INPUT_TIME < 1.5):
-                    idle_frames = 0
-                    sleep_delay = 0.033
-                else:
-                    idle_frames += 1
-                    if idle_frames > 150:
-                        sleep_delay = 0.200 # Idle frame decelerator: drop to 5 FPS
+                base_delay = 0.033  # 30 FPS
 
-                # Send frame if updated, or force update once every 60 frames as keep-alive
-                if frame_data and (has_changed or frame_sequence % 60 == 0):
-                    if not has_changed and frame_sequence % 60 == 0:
-                        # Force full frame on keepalive updates
-                        frame_data, _, tx, ty, tw, th, is_delta = screen_capture.capture(
-                            monitor_id, quality=quality, resolution=(target_w, target_h), force_full=True
-                        )
+            # Capture screen image frame (returns Base64 string, has_changed status, and tile coordinates)
+            frame_data, has_changed, tx, ty, tw, th, is_delta = screen_capture.capture(
+                monitor_id, quality=quality, resolution=(target_w, target_h)
+            )
+            
+            if has_changed or (time.time() - LAST_INPUT_TIME < 1.5):
+                idle_frames = 0
+                sleep_delay = base_delay
+            else:
+                idle_frames += 1
+                if idle_frames > 150:
+                    sleep_delay = 0.200 # Idle frame decelerator: drop to 5 FPS
 
-                    if frame_data:
-                        await websocket.send_json({
-                            "type": "frame",
-                            "sequence": frame_sequence,
-                            "data": frame_data,
-                            "x": tx,
-                            "y": ty,
-                            "w": tw,
-                            "h": th,
-                            "is_delta": is_delta,
-                            "timestamp": datetime.now(timezone.utc).isoformat()
-                        })
-                        metrics_collector.log_frame(len(frame_data))
-                        frame_sequence += 1
+            # Send frame if updated, or force update once every 60 frames as keep-alive
+            if frame_data and (has_changed or frame_sequence % 60 == 0):
+                if not has_changed and frame_sequence % 60 == 0:
+                    # Force full frame on keepalive updates
+                    frame_data, _, tx, ty, tw, th, is_delta = screen_capture.capture(
+                        monitor_id, quality=quality, resolution=(target_w, target_h), force_full=True
+                    )
+
+                if frame_data:
+                    payload_frame = {
+                        "type": "frame",
+                        "sequence": frame_sequence,
+                        "data": frame_data,
+                        "x": tx,
+                        "y": ty,
+                        "w": tw,
+                        "h": th,
+                        "is_delta": is_delta,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    }
+                    async with conn_lock:
+                        await websocket.send_json(payload_frame)
+                    metrics_collector.log_frame(len(frame_data))
+                    frame_sequence += 1
 
             # Request latency RTT calculation every 30 iterations (~1 sec)
             if frame_sequence % 30 == 0:
-                await websocket.send_json({
+                payload_ping = {
                     "type": "ping",
                     "id": frame_sequence,
                     "timestamp": datetime.now(timezone.utc).isoformat()
-                })
+                }
+                async with conn_lock:
+                    await websocket.send_json(payload_ping)
 
             await asyncio.sleep(sleep_delay)
 
     except Exception as e:
         logger.error(f"WebSocket session {conn_id} error: {e}")
     finally:
-        reader_task.cancel()
-        audio_task.cancel()
-        video_encoder.cleanup()
+        # Clean up any associated WebRTC connection for this socket session ID
         try:
-            await reader_task
-            await audio_task
+            await webrtc_manager.close_connection(conn_id)
+        except Exception:
+            pass
+
+        if reader_task:
+            reader_task.cancel()
+        if audio_task:
+            audio_task.cancel()
+        if video_encoder:
+            try:
+                video_encoder.cleanup()
+            except Exception:
+                pass
+        try:
+            if reader_task:
+                await reader_task
+            if audio_task:
+                await audio_task
         except asyncio.CancelledError:
             pass
         # Release any stuck modifiers on disconnect
         await asyncio.to_thread(input_validator.release_all_modifiers)
         ACTIVE_WEBSOCKETS.pop(conn_id, None)
+        ACTIVE_WEBSOCKET_LOCKS.pop(conn_id, None)
         connection_manager.remove_connection(client_ip, conn_id)
         await audit_logger.log_event("session_end", {"ip": client_ip, "conn_id": conn_id})
         logger.info(f"WebSocket session {conn_id} destroyed")
@@ -450,10 +691,20 @@ async def handle_input(data: dict, current_user: TokenData = Depends(verify_toke
             "role": current_user.role
         }
         for peer_id, ws in list(ACTIVE_WEBSOCKETS.items()):
-            try:
-                asyncio.create_task(ws.send_json(presence_payload))
-            except Exception:
-                pass
+            lock = ACTIVE_WEBSOCKET_LOCKS.get(peer_id)
+            if lock:
+                async def safe_send(w, payload, lk):
+                    async with lk:
+                        try:
+                            await w.send_json(payload)
+                        except Exception:
+                            pass
+                asyncio.create_task(safe_send(ws, presence_payload, lock))
+            else:
+                try:
+                    asyncio.create_task(ws.send_json(presence_payload))
+                except Exception:
+                    pass
 
     if event_type and event_type != "mouse_move":
         client_ip = request.client.host if request and request.client else "unknown"
@@ -493,13 +744,13 @@ async def set_clipboard(data: dict, current_user: TokenData = Depends(verify_tok
         "ip": client_ip,
         "length": len(data.get("data", ""))
     })
-    clipboard_manager.set_text(data.get("data"))
+    await asyncio.to_thread(clipboard_manager.set_text, data.get("data"))
     return {"status": "success"}
 
 @app.get("/clipboard")
 async def get_clipboard(current_user: TokenData = Depends(verify_token)):
     """Fetches text payload from host clipboard."""
-    text = clipboard_manager.get_text()
+    text = await asyncio.to_thread(clipboard_manager.get_text)
     return {"data": text}
 
 # ------------------ Health & Telemetry ------------------
@@ -522,6 +773,40 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
+
+# ------------------ Static Frontend Hosting & Fallbacks ------------------
+dist_path = os.getenv("FRONTEND_DIST_PATH", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")))
+assets_path = os.path.join(dist_path, "assets")
+
+if os.path.isdir(assets_path):
+    logger.info(f"Mounting static files from {assets_path} under /assets")
+    app.mount("/assets", StaticFiles(directory=assets_path), name="assets")
+else:
+    logger.warning(f"Static assets directory not found at {assets_path}. Production frontend may not be served.")
+
+@app.get("/")
+async def serve_index():
+    index_file = os.path.join(dist_path, "index.html")
+    if os.path.isfile(index_file):
+        return FileResponse(index_file)
+    raise HTTPException(status_code=404, detail="Frontend build (index.html) not found.")
+
+@app.get("/{catchall:path}")
+async def serve_static_or_spa(catchall: str):
+    # Check if the requested file exists in dist_path (for favicon.ico, manifest.json, robots.txt, etc.)
+    file_path = os.path.join(dist_path, catchall)
+    if os.path.isfile(file_path):
+        return FileResponse(file_path)
+        
+    # If the path looks like a backend API or websocket endpoint, return 404
+    if any(catchall.startswith(prefix) for prefix in ["auth", "monitors", "input", "clipboard", "metrics", "health", "ws"]):
+        raise HTTPException(status_code=404, detail="Not Found")
+        
+    # Fallback to SPA routing index.html
+    index_file = os.path.join(dist_path, "index.html")
+    if os.path.isfile(index_file):
+        return FileResponse(index_file)
+    raise HTTPException(status_code=404, detail="Frontend build (index.html) not found.")
 
 def generate_self_signed_certs() -> tuple[str, str]:
     """Generates a temporary self-signed certificate and key for HTTPS/WSS."""

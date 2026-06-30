@@ -2,6 +2,35 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* ConnectWise ScreenConnect Classic Color Palette */
+  --brand-400: #38bdf8;
+  --brand-500: #0284c7; /* ConnectWise Blue Accent */
+  --brand-600: #0369a1;
+  --brand-700: #075985;
+}
+
+.theme-indigo {
+  --brand-400: #818cf8;
+  --brand-500: #4f46e5;
+  --brand-600: #4338ca;
+  --brand-700: #3730a3;
+}
+
+.theme-emerald {
+  --brand-400: #34d399;
+  --brand-500: #10b981;
+  --brand-600: #059669;
+  --brand-700: #047857;
+}
+
+.theme-rose {
+  --brand-400: #fb7185;
+  --brand-500: #f43f5e;
+  --brand-600: #e11d48;
+  --brand-700: #be123c;
+}
+
 /* Custom Scrollbar Styles for the dashboard panels */
 ::-webkit-scrollbar {
   width: 6px;
@@ -28,7 +57,7 @@ input[type="range"]::-webkit-slider-thumb {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #8b5cf6; /* brand-500 */
+  background: var(--brand-500);
   cursor: pointer;
   transition: transform 0.1s ease;
 }
@@ -40,4 +69,36 @@ input[type="range"]::-webkit-slider-thumb:hover {
 /* Custom CSS helper utilities */
 .bg-slate-850 {
   background-color: rgb(22, 30, 49);
+}
+
+/* Dropdown popover animations & styling */
+.dropdown-menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 50;
+  min-width: 12rem;
+  background-color: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.5);
+  margin-top: 0.25rem;
+}
+
+.dropdown-menu.show {
+  display: block;
+}
+
+/* Helper Panel sliding transitions */
+#helper-panel {
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#helper-panel.collapsed {
+  width: 0 !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  border-left-width: 0 !important;
+  overflow: hidden;
 }

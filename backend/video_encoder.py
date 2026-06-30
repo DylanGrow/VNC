@@ -56,13 +56,15 @@ class VideoEncoder:
             frame = av.VideoFrame.from_image(pil_image)
             frame.pts = None
             
-            packets = []
             for packet in self.stream.encode(frame):
-                packets.append(bytes(packet))
+                self.container.mux(packet)
                 
-            if packets:
-                return b"".join(packets)
-            return None
+            self.output_buffer.seek(0)
+            data = self.output_buffer.read()
+            self.output_buffer.seek(0)
+            self.output_buffer.truncate(0)
+            
+            return data if data else None
         except Exception as e:
             logger.debug(f"Failed to encode screen frame to video H.264: {e}")
             return None
@@ -73,6 +75,9 @@ class VideoEncoder:
             try:
                 for packet in self.stream.encode():
                     pass
+            except Exception:
+                pass
+            try:
                 self.container.close()
             except Exception:
                 pass

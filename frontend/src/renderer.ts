@@ -6,6 +6,7 @@ export class CanvasRenderer {
 
   // Pool of recyclable Image objects
   private imagePool: HTMLImageElement[] = [];
+  private paintScheduled = false;
 
   constructor(canvasId: string) {
     this.canvas = document.getElementById(canvasId) as HTMLCanvasElement;
@@ -54,6 +55,11 @@ export class CanvasRenderer {
       this.canvas.style.width = `${width}px`;
       this.canvas.style.height = `${height}px`;
 
+      const container = document.getElementById('canvas-container');
+      if (container) {
+        container.style.aspectRatio = `${width} / ${height}`;
+      }
+
       // Set scale transforms to ensure crisp visuals
       this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       this.offscreenCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -63,24 +69,31 @@ export class CanvasRenderer {
   /**
    * Render an image onto the canvas using double buffering and requestAnimationFrame.
    */
-  public render(img: HTMLImageElement, x = 0, y = 0, w?: number, h?: number, isDelta = false) {
+  public render(img: HTMLImageElement | HTMLVideoElement, x = 0, y = 0, w?: number, h?: number, isDelta = false) {
+    const imgW = (img as any).videoWidth !== undefined ? (img as any).videoWidth : (img as any).naturalWidth;
+    const imgH = (img as any).videoHeight !== undefined ? (img as any).videoHeight : (img as any).naturalHeight;
+
     if (!isDelta) {
-      this.resize(img.naturalWidth, img.naturalHeight);
+      this.resize(imgW, imgH);
       this.offscreenCtx.drawImage(img, 0, 0);
     } else {
-      const drawW = w !== undefined ? w : img.naturalWidth;
-      const drawH = h !== undefined ? h : img.naturalHeight;
+      const drawW = w !== undefined ? w : imgW;
+      const drawH = h !== undefined ? h : imgH;
       this.offscreenCtx.drawImage(img, x, y, drawW, drawH);
     }
 
     // Schedule paint of offscreen buffer to active canvas
-    window.requestAnimationFrame(() => {
-      // Paint 1-to-1 pixels from offscreen canvas to main canvas backing store
-      this.ctx.save();
-      this.ctx.setTransform(1, 0, 0, 1, 0, 0);
-      this.ctx.drawImage(this.offscreenCanvas, 0, 0);
-      this.ctx.restore();
-    });
+    if (!this.paintScheduled) {
+      this.paintScheduled = true;
+      window.requestAnimationFrame(() => {
+        // Paint 1-to-1 pixels from offscreen canvas to main canvas backing store
+        this.ctx.save();
+        this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+        this.ctx.drawImage(this.offscreenCanvas, 0, 0);
+        this.ctx.restore();
+        this.paintScheduled = false;
+      });
+    }
   }
 
   /**
@@ -126,5 +139,68 @@ export class CanvasRenderer {
   public clear() {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.offscreenCtx.clearRect(0, 0, this.offscreenCanvas.width, this.offscreenCanvas.height);
+    
+    // Clear sparkline canvas too
+    const sparkline = document.getElementById('sparkline-canvas') as HTMLCanvasElement;
+    if (sparkline) {
+      const ctx = sparkline.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, sparkline.width, sparkline.height);
+    }
+  }
+
+  /**
+   * Draws a latency sparkline chart inside a micro-canvas.
+   */
+  public drawSparkline(canvasId: string, values: number[]) {
+    const canvas = document.getElementById(canvasId) as HTMLCanvasElement;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    
+    if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+    }
+    
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, width, height);
+
+    if (values.length < 2) {
+      ctx.restore();
+      return;
+    }
+
+    const maxVal = Math.max(...values, 100); 
+    const minVal = Math.min(...values, 0);
+    const range = maxVal - minVal;
+
+    ctx.beginPath();
+    ctx.strokeStyle = '#6366f1'; // Indigo-500
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
+
+    for (let i = 0; i < values.length; i++) {
+      const x = (i / (values.length - 1)) * width;
+      const y = height - ((values[i] - minVal) / range) * (height - 6) - 3;
+      if (i === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.stroke();
+
+    ctx.lineTo(width, height);
+    ctx.lineTo(0, height);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(99, 102, 241, 0.08)';
+    ctx.fill();
+    
+    ctx.restore();
   }
 }

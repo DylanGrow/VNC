@@ -1,12 +1,13 @@
 # backend/auth.py
 import jwt
 import secrets
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List
 from collections import defaultdict
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from fastapi import Depends, HTTPException, status, Request
-from fastapi.security import HTTPBearer, HTTPAuthCredentials
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import os
 import logging
 
@@ -17,60 +18,70 @@ FAILED_ATTEMPTS: Dict[str, List[datetime]] = defaultdict(list)
 # IP -> ban expiration datetime
 BANNED_IPS: Dict[str, datetime] = {}
 
+# Reentrant lock to prevent multi-threaded dictionary state mutation crashes
+AUTH_LOCK = threading.RLock()
+
 def prune_expired_auth_records():
     """Prunes expired ban and failed attempt records to prevent memory growth leaks."""
-    now = datetime.now(timezone.utc)
-    expired_bans = [ip for ip, exp in BANNED_IPS.items() if now > exp]
-    for ip in expired_bans:
-        BANNED_IPS.pop(ip, None)
-        FAILED_ATTEMPTS.pop(ip, None)
-        
-    for ip, attempts in list(FAILED_ATTEMPTS.items()):
-        valid_attempts = [t for t in attempts if now - t < timedelta(minutes=10)]
-        if not valid_attempts:
-            FAILED_ATTEMPTS.pop(ip, None)
-        else:
-            FAILED_ATTEMPTS[ip] = valid_attempts
-
-    # Enforce hard upper boundaries to prevent memory DoS
-    if len(BANNED_IPS) > 10000:
-        sorted_bans = sorted(BANNED_IPS.items(), key=lambda x: x[1])
-        for ip, _ in sorted_bans[:len(BANNED_IPS) - 10000]:
+    with AUTH_LOCK:
+        now = datetime.now(timezone.utc)
+        expired_bans = [ip for ip, exp in BANNED_IPS.items() if now > exp]
+        for ip in expired_bans:
             BANNED_IPS.pop(ip, None)
-            
-    if len(FAILED_ATTEMPTS) > 10000:
-        excess = len(FAILED_ATTEMPTS) - 10000
-        for ip in list(FAILED_ATTEMPTS.keys())[:excess]:
             FAILED_ATTEMPTS.pop(ip, None)
+            
+        for ip, attempts in list(FAILED_ATTEMPTS.items()):
+            valid_attempts = [t for t in attempts if now - t < timedelta(minutes=10)]
+            if not valid_attempts:
+                FAILED_ATTEMPTS.pop(ip, None)
+            else:
+                FAILED_ATTEMPTS[ip] = valid_attempts
+
+        # Enforce hard upper boundaries to prevent memory DoS
+        if len(BANNED_IPS) > 10000:
+            sorted_bans = sorted(BANNED_IPS.items(), key=lambda x: x[1])
+            for ip, _ in sorted_bans[:len(BANNED_IPS) - 10000]:
+                BANNED_IPS.pop(ip, None)
+                
+        if len(FAILED_ATTEMPTS) > 10000:
+            excess = len(FAILED_ATTEMPTS) - 10000
+            for ip in list(FAILED_ATTEMPTS.keys())[:excess]:
+                FAILED_ATTEMPTS.pop(ip, None)
 
 def track_failed_attempt(ip: str):
     """Tracks login failures. If 5 failures occur in 10 minutes, bans IP for 30 minutes."""
-    prune_expired_auth_records()
-    now = datetime.now(timezone.utc)
-    FAILED_ATTEMPTS[ip].append(now)
-    FAILED_ATTEMPTS[ip] = [t for t in FAILED_ATTEMPTS[ip] if now - t < timedelta(minutes=10)]
-    
-    if len(FAILED_ATTEMPTS[ip]) >= 5:
-        BANNED_IPS[ip] = now + timedelta(minutes=30)
-        logger.warning(f"IP {ip} banned for 30 minutes due to 5 consecutive auth failures.")
+    with AUTH_LOCK:
+        prune_expired_auth_records()
+        now = datetime.now(timezone.utc)
+        FAILED_ATTEMPTS[ip].append(now)
+        FAILED_ATTEMPTS[ip] = [t for t in FAILED_ATTEMPTS[ip] if now - t < timedelta(minutes=10)]
+        
+        if len(FAILED_ATTEMPTS[ip]) >= 5:
+            BANNED_IPS[ip] = now + timedelta(minutes=30)
+            logger.warning(f"IP {ip} banned for 30 minutes due to 5 consecutive auth failures.")
 
 def is_ip_banned(ip: str) -> bool:
     """Checks if IP is currently banned, cleans up expired ban records."""
-    prune_expired_auth_records()
-    if ip not in BANNED_IPS:
-        return False
-    now = datetime.now(timezone.utc)
-    if now > BANNED_IPS[ip]:
-        BANNED_IPS.pop(ip, None)
-        FAILED_ATTEMPTS.pop(ip, None)
-        return False
-    return True
+    with AUTH_LOCK:
+        prune_expired_auth_records()
+        if ip not in BANNED_IPS:
+            return False
+        now = datetime.now(timezone.utc)
+        if now > BANNED_IPS[ip]:
+            BANNED_IPS.pop(ip, None)
+            FAILED_ATTEMPTS.pop(ip, None)
+            return False
+        return True
 
 def clear_failed_attempts(ip: str):
     """Wipes failed attempt tracker for the given IP address."""
-    FAILED_ATTEMPTS.pop(ip, None)
+    with AUTH_LOCK:
+        FAILED_ATTEMPTS.pop(ip, None)
 
-SECRET_KEY = os.getenv("SECRET_KEY", "change_this_to_a_very_secure_random_string_at_least_32_bytes_long")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    SECRET_KEY = secrets.token_hex(32)
+    logger.warning("SECRET_KEY environment variable not set. Generated a secure transient signing key.")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
 
@@ -120,10 +131,10 @@ def verify_token_string(token: str) -> TokenData:
         )
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError:
+    except (jwt.InvalidTokenError, ValidationError, KeyError, TypeError, ValueError):
         raise HTTPException(status_code=401, detail="Invalid token")
 
-def verify_token(request: Request, credentials: Optional[HTTPAuthCredentials] = Depends(security)) -> TokenData:
+def verify_token(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> TokenData:
     """FastAPI HTTP dependency for verifying token from cookies or Authorization header, enforcing CSRF checks."""
     ip = request.client.host if request.client else "unknown"
     if is_ip_banned(ip):
@@ -145,11 +156,14 @@ def verify_token(request: Request, credentials: Optional[HTTPAuthCredentials] = 
     
     # CSRF Token validation for write methods
     if request.method in ["POST", "PUT", "DELETE"]:
-        csrf_header = request.headers.get("X-CSRF-Token")
-        if not csrf_header or csrf_header != token_data.csrf_token:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="CSRF token validation failed"
-            )
+        # Exempt /auth/refresh and /auth/logout from CSRF checks to allow session auto-recovery and logout cleanups
+        path = request.url.path
+        if not (path.endswith("/auth/refresh") or path.endswith("/auth/logout")):
+            csrf_header = request.headers.get("X-CSRF-Token")
+            if not csrf_header or csrf_header != token_data.csrf_token:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="CSRF token validation failed"
+                )
             
     return token_data

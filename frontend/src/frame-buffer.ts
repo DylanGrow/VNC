@@ -27,6 +27,19 @@ export class FrameBuffer {
       return;
     }
 
+    // Catch up to prevent screen freezing and memory leaks if packets are dropped
+    const MAX_GAP = 5;
+    if (sequence > this.nextExpectedSequence + MAX_GAP) {
+      console.warn(`[FrameBuffer] Gap detected (expected ${this.nextExpectedSequence}, received ${sequence}). Resetting sequence to catch up.`);
+      for (const [seq, f] of this.buffer.entries()) {
+        if (seq < sequence) {
+          onDiscard(f);
+          this.buffer.delete(seq);
+        }
+      }
+      this.nextExpectedSequence = sequence;
+    }
+
     this.buffer.set(sequence, frame);
     this.flush(onReadyToRender);
   }

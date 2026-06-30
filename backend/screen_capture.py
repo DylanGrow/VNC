@@ -147,66 +147,86 @@ class ScreenCapture:
                 monitor = monitors[monitor_id]
                 screenshot = sct.grab(monitor)
             
-            img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
-            
-            if resolution and (img.width != resolution[0] or img.height != resolution[1]):
-                img = img.resize(resolution, Image.Resampling.LANCZOS)
+            raw_img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
+            img = None
+            try:
+                if resolution and (raw_img.width != resolution[0] or raw_img.height != resolution[1]):
+                    img = raw_img.resize(resolution, Image.Resampling.BILINEAR)
+                else:
+                    img = raw_img
 
-            w, h = img.width, img.height
+                w, h = img.width, img.height
 
-            # Partition into 2x2 grid quadrants
-            half_w, half_h = w // 2, h // 2
-            quadrants = [
-                (0, 0, half_w, half_h),           # Q0: Top-Left
-                (half_w, 0, w, half_h),           # Q1: Top-Right
-                (0, half_h, half_w, h),           # Q2: Bottom-Left
-                (half_w, half_h, w, h)            # Q3: Bottom-Right
-            ]
+                # Partition into 2x2 grid quadrants
+                half_w, half_h = w // 2, h // 2
+                quadrants = [
+                    (0, 0, half_w, half_h),           # Q0: Top-Left
+                    (half_w, 0, w, half_h),           # Q1: Top-Right
+                    (0, half_h, half_w, h),           # Q2: Bottom-Left
+                    (half_w, half_h, w, h)            # Q3: Bottom-Right
+                ]
 
-            if monitor_id not in self.quadrant_hashes:
-                self.quadrant_hashes[monitor_id] = {}
+                if monitor_id not in self.quadrant_hashes:
+                    self.quadrant_hashes[monitor_id] = {}
 
-            changed_quads = []
-            current_quad_hashes = {}
+                changed_quads = []
+                current_quad_hashes = {}
 
-            # Calculate and compare MD5 hashes for each quadrant
-            for idx, box in enumerate(quadrants):
-                q_img = img.crop(box)
-                diff_q = q_img.resize((16, 9), Image.Resampling.NEAREST)
-                q_hash = hashlib.md5(diff_q.tobytes()).hexdigest()
-                current_quad_hashes[idx] = q_hash
+                # Calculate and compare MD5 hashes for each quadrant
+                for idx, box in enumerate(quadrants):
+                    q_img = img.crop(box)
+                    diff_q = q_img.resize((16, 9), Image.Resampling.NEAREST)
+                    q_hash = hashlib.md5(diff_q.tobytes()).hexdigest()
+                    diff_q.close()
+                    current_quad_hashes[idx] = q_hash
 
-                old_hash = self.quadrant_hashes[monitor_id].get(idx)
-                if old_hash != q_hash:
-                    changed_quads.append((idx, box, q_img))
+                    old_hash = self.quadrant_hashes[monitor_id].get(idx)
+                    if old_hash != q_hash:
+                        changed_quads.append((idx, box, q_img))
+                    else:
+                        q_img.close()
 
-            # Case A: Screen is completely identical, no changes
-            if len(changed_quads) == 0 and not force_full:
-                return None, False, 0, 0, w, h, False
+                # Case A: Screen is completely identical, no changes
+                if len(changed_quads) == 0 and not force_full:
+                    return None, False, 0, 0, w, h, False
 
-            # Case B: Significant changes (>2 quadrants modified) or full-frame override
-            if force_full or len(changed_quads) > 2 or not self.quadrant_hashes[monitor_id]:
-                # Update all quadrant hashes
-                self.quadrant_hashes[monitor_id] = current_quad_hashes
+                # Case B: Significant changes (>2 quadrants modified) or full-frame override
+                if force_full or len(changed_quads) > 2 or not self.quadrant_hashes[monitor_id]:
+                    # Update all quadrant hashes
+                    self.quadrant_hashes[monitor_id] = current_quad_hashes
+                    
+                    # Close unused quadrant images immediately
+                    for _, _, qi in changed_quads:
+                        qi.close()
+                    
+                    with io.BytesIO() as buffer:
+                        img.save(buffer, format="JPEG", quality=quality, optimize=True)
+                        jpeg_bytes = buffer.getvalue()
+                    base64_str = base64.b64encode(jpeg_bytes).decode("utf-8")
+                    return base64_str, True, 0, 0, w, h, False
+
+                # Case C: Minor quadrant updates (send only the first modified quadrant to keep payload light)
+                q_idx, box, q_img = changed_quads[0]
+                self.quadrant_hashes[monitor_id][q_idx] = current_quad_hashes[q_idx]
+
+                # Close other unused quadrant crops
+                for other_idx, _, other_qi in changed_quads[1:]:
+                    other_qi.close()
+
+                with io.BytesIO() as buffer:
+                    q_img.save(buffer, format="JPEG", quality=quality, optimize=True)
+                    jpeg_bytes = buffer.getvalue()
+                q_img.close()
                 
-                buffer = io.BytesIO()
-                img.save(buffer, format="JPEG", quality=quality, optimize=True)
-                jpeg_bytes = buffer.getvalue()
                 base64_str = base64.b64encode(jpeg_bytes).decode("utf-8")
-                return base64_str, True, 0, 0, w, h, False
 
-            # Case C: Minor quadrant updates (send only the first modified quadrant to keep payload light)
-            q_idx, box, q_img = changed_quads[0]
-            self.quadrant_hashes[monitor_id][q_idx] = current_quad_hashes[q_idx]
-
-            buffer = io.BytesIO()
-            q_img.save(buffer, format="JPEG", quality=quality, optimize=True)
-            jpeg_bytes = buffer.getvalue()
-            base64_str = base64.b64encode(jpeg_bytes).decode("utf-8")
-
-            tx, ty = box[0], box[1]
-            tw, th = box[2] - box[0], box[3] - box[1]
-            return base64_str, True, tx, ty, tw, th, True
+                tx, ty = box[0], box[1]
+                tw, th = box[2] - box[0], box[3] - box[1]
+                return base64_str, True, tx, ty, tw, th, True
+            finally:
+                raw_img.close()
+                if img is not None and img is not raw_img:
+                    img.close()
 
         except Exception as e:
             logger.error(f"Failed to capture screen: {e}. Resetting mss handle.")
@@ -237,7 +257,7 @@ class ScreenCapture:
                 screenshot = sct.grab(monitor)
             img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
             if resolution and (img.width != resolution[0] or img.height != resolution[1]):
-                img = img.resize(resolution, Image.Resampling.LANCZOS)
+                img = img.resize(resolution, Image.Resampling.BILINEAR)
             return img
         except Exception as e:
             logger.debug(f"Failed to capture PIL image: {e}. Resetting handle.")
@@ -285,3 +305,14 @@ class ScreenCapture:
         jpeg_bytes = buffer.getvalue()
         base64_str = base64.b64encode(jpeg_bytes).decode("utf-8")
         return base64_str, True
+
+    def close(self):
+        """Close the display manager connection handle cleanly."""
+        with self.lock:
+            if self.sct is not None:
+                try:
+                    self.sct.close()
+                except Exception:
+                    pass
+                self.sct = None
+                logger.info("ScreenCapture: mss display handle closed cleanly.")

@@ -39,7 +39,7 @@ export class ScreenShareApp {
     this.renderer = new CanvasRenderer('vnc-canvas');
     this.metrics = new MetricsTracker();
     this.connection = new ConnectionManager(this.renderer, this.metrics);
-    this.input = new InputHandler(this.renderer.getCanvas());
+    this.input = new InputHandler(this.renderer.getCanvas(), (payload) => this.connection.send(payload));
     this.clipboard = new ClipboardSync();
 
     // DOM Bindings
@@ -70,9 +70,140 @@ export class ScreenShareApp {
     document.getElementById('btn-key-ctrlaltdel')?.addEventListener('click', () => this.sendKeyCombo(['ctrl', 'alt', 'delete']));
     document.getElementById('btn-key-alttab')?.addEventListener('click', () => this.sendKeyCombo(['alt', 'tab']));
     document.getElementById('btn-key-esc')?.addEventListener('click', () => this.sendKeyCombo(['escape']));
+    document.getElementById('btn-key-tab')?.addEventListener('click', () => this.sendKeyCombo(['tab']));
+    document.getElementById('btn-key-enter')?.addEventListener('click', () => this.sendKeyCombo(['enter']));
+    document.getElementById('btn-key-backspace')?.addEventListener('click', () => this.sendKeyCombo(['backspace']));
+
+    // Diagnostics HUD Visibility Toggle
+    const hudToggle = document.getElementById('chk-hud-toggle') as HTMLInputElement;
+    hudToggle?.addEventListener('change', () => {
+      const isVisible = hudToggle.checked;
+      localStorage.setItem('vnc_hud_visible', isVisible ? 'true' : 'false');
+      const hud = document.getElementById('metrics-hud');
+      if (hud) {
+        if (isVisible && this.connection.isConnected) {
+          hud.classList.remove('hidden');
+        } else {
+          hud.classList.add('hidden');
+        }
+      }
+    });
+
+    // Help modal event hooks
+    const helpModal = document.getElementById('help-modal');
+    document.getElementById('btn-help')?.addEventListener('click', () => {
+      helpModal?.classList.remove('hidden');
+    });
+    document.getElementById('btn-help-close')?.addEventListener('click', () => {
+      helpModal?.classList.add('hidden');
+    });
+    document.getElementById('btn-help-ok')?.addEventListener('click', () => {
+      helpModal?.classList.add('hidden');
+    });
+
+    // Theme selector event hooks
+    document.getElementById('theme-indigo')?.addEventListener('click', () => this.setTheme('indigo'));
+    document.getElementById('theme-emerald')?.addEventListener('click', () => this.setTheme('emerald'));
+    document.getElementById('theme-rose')?.addEventListener('click', () => this.setTheme('rose'));
+
+    // Collapsible Tools Sidebar Toggle
+    const btnToggleHelper = document.getElementById('btn-toggle-helper');
+    const helperPanel = document.getElementById('helper-panel');
+    
+    // Restore sidebar state from preferences
+    const isHelperCollapsed = localStorage.getItem('vnc_helper_collapsed') === 'true';
+    if (helperPanel) {
+      if (isHelperCollapsed) {
+        helperPanel.classList.add('hidden');
+        btnToggleHelper?.classList.remove('bg-brand-600', 'text-white');
+        btnToggleHelper?.classList.add('bg-slate-700', 'text-slate-300');
+      } else {
+        helperPanel.classList.remove('hidden');
+        btnToggleHelper?.classList.add('bg-brand-600', 'text-white');
+        btnToggleHelper?.classList.remove('bg-slate-700', 'text-slate-300');
+      }
+    }
+
+    btnToggleHelper?.addEventListener('click', () => {
+      if (helperPanel) {
+        const isHidden = helperPanel.classList.contains('hidden');
+        if (isHidden) {
+          helperPanel.classList.remove('hidden');
+          localStorage.setItem('vnc_helper_collapsed', 'false');
+          btnToggleHelper.classList.add('bg-brand-600', 'text-white');
+          btnToggleHelper.classList.remove('bg-slate-700', 'text-slate-300');
+        } else {
+          helperPanel.classList.add('hidden');
+          localStorage.setItem('vnc_helper_collapsed', 'true');
+          btnToggleHelper.classList.remove('bg-brand-600', 'text-white');
+          btnToggleHelper.classList.add('bg-slate-700', 'text-slate-300');
+        }
+      }
+    });
+
+    // Dropdown Popover Toggles
+    const dropdowns = ['view', 'commands', 'themes'];
+    dropdowns.forEach(dd => {
+      const btn = document.getElementById(`menu-btn-${dd}`);
+      const menu = document.getElementById(`menu-dropdown-${dd}`);
+      
+      btn?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Hide others
+        dropdowns.forEach(other => {
+          if (other !== dd) {
+            document.getElementById(`menu-dropdown-${other}`)?.classList.remove('show');
+          }
+        });
+        menu?.classList.toggle('show');
+      });
+    });
+
+    // Global click handler to close dropdowns
+    const closeDropdowns = () => {
+      dropdowns.forEach(dd => {
+        document.getElementById(`menu-dropdown-${dd}`)?.classList.remove('show');
+      });
+    };
+    document.addEventListener('click', closeDropdowns);
+    window.addEventListener('vnc-menu-collapse', closeDropdowns);
+
+    // Prevent closing when clicking inside active menus
+    dropdowns.forEach(dd => {
+      document.getElementById(`menu-dropdown-${dd}`)?.addEventListener('click', (e) => {
+        e.stopPropagation();
+      });
+    });
+
+    // Listen for WebSocket authentication policy violations
+    window.addEventListener('vnc-auth-required', (e: any) => {
+      const wasLoggedIn = this.token !== null;
+      this.handleLogout();
+      if (this.elAuthError && wasLoggedIn) {
+        this.elAuthError.textContent = `Session expired: ${e.detail || 'Please log in again'}`;
+        this.elAuthError.classList.remove('hidden');
+      }
+    });
 
     // Connect remote presence indicators
     this.connection.onPresenceUpdate = (data) => this.handlePresenceUpdate(data);
+
+    // Presence cursor cleanup cycle (Prunes inactive remote operator cursors after 5 seconds of silence)
+    setInterval(() => {
+      const now = Date.now();
+      const timeout = 5000;
+      this.remoteCursors.forEach((el, username) => {
+        const lastUpdate = parseInt(el.dataset.lastUpdate || '0', 10);
+        if (now - lastUpdate > timeout) {
+          el.remove();
+          this.remoteCursors.delete(username);
+        }
+      });
+    }, 2000);
+
+    // Restore user-customized options and check for active session
+    this.restoreState();
+    this.checkSessionRecovery();
   }
 
   /**
@@ -163,6 +294,12 @@ export class ScreenShareApp {
     // Hide audio toggle controls
     this.btnAudioToggle.classList.add('hidden');
 
+    // Hide diagnostics HUD on logout
+    const hud = document.getElementById('metrics-hud');
+    if (hud) {
+      hud.classList.add('hidden');
+    }
+
     this.modalAuth.classList.remove('hidden');
     this.btnLogout.classList.add('hidden');
     this.txtPassword.value = '';
@@ -243,35 +380,33 @@ export class ScreenShareApp {
 
       if (monitors.length > 0) {
         this.monitorId = monitors[0].id;
+        const infoMon = document.getElementById('info-monitor');
+        if (infoMon) infoMon.textContent = this.monitorId.toString();
       }
     } catch (err) {
       console.error('[VNC App] Failed to query monitors list:', err);
     }
   }
 
-  /**
-   * Switch active monitor stream source.
-   */
   private handleMonitorChange() {
     const val = parseInt(this.selectMonitor.value, 10);
     if (!isNaN(val)) {
       this.monitorId = val;
       this.connection.setMonitorId(this.monitorId);
       this.input.setMonitorId(this.monitorId);
+      localStorage.setItem('vnc_monitor_id', this.monitorId.toString());
+      const infoMon = document.getElementById('info-monitor');
+      if (infoMon) infoMon.textContent = this.monitorId.toString();
     }
   }
 
-  /**
-   * Adjusts client slider visual.
-   */
   private handleQualityChange() {
-    const quality = this.sliderQuality.value;
+    const quality = parseInt(this.sliderQuality.value, 10);
     this.valQuality.textContent = `${quality}%`;
+    localStorage.setItem('vnc_quality', quality.toString());
+    this.connection.setQuality(quality);
   }
 
-  /**
-   * Set Canvas container to full viewport.
-   */
   private toggleFullscreen() {
     const container = document.getElementById('canvas-container');
     if (!container) {
@@ -287,9 +422,6 @@ export class ScreenShareApp {
     }
   }
 
-  /**
-   * Render virtual remote cursor overlay representations.
-   */
   private handlePresenceUpdate(data: { username: string; x: number; y: number; role: string }) {
     if (data.username === this.username) {
       return;
@@ -300,8 +432,8 @@ export class ScreenShareApp {
       cursorEl = document.createElement('div');
       cursorEl.className = 'absolute pointer-events-none z-50 flex items-center space-x-1 transition-all duration-75';
       cursorEl.innerHTML = `
-        <div class="h-3 w-3 rounded-full bg-indigo-500 border border-white"></div>
-        <span class="bg-indigo-950/80 border border-indigo-500/30 text-[10px] text-indigo-300 px-1 py-0.5 rounded shadow">${data.username} (${data.role})</span>
+        <div class="h-3 w-3 rounded-full bg-brand-500 border border-white"></div>
+        <span class="bg-slate-900/90 border border-slate-700 text-[10px] text-brand-300 px-1 py-0.5 rounded shadow">${data.username} (${data.role})</span>
       `;
       const container = document.getElementById('canvas-container');
       container?.appendChild(cursorEl);
@@ -317,24 +449,139 @@ export class ScreenShareApp {
       const top = canvasTop + data.y * rect.height;
       cursorEl.style.left = `${left}px`;
       cursorEl.style.top = `${top}px`;
+      cursorEl.dataset.lastUpdate = Date.now().toString();
       cursorEl.classList.remove('hidden');
     }
   }
 
-  private toggleAudio() {
-    this.connection.audioMuted = !this.connection.audioMuted;
+  private toggleAudio(forceState?: boolean) {
+    if (forceState !== undefined) {
+      this.connection.audioMuted = forceState;
+    } else {
+      this.connection.audioMuted = !this.connection.audioMuted;
+    }
+    localStorage.setItem('vnc_audio_muted', this.connection.audioMuted ? 'true' : 'false');
     if (this.connection.audioMuted) {
       this.svgAudioOn.classList.add('hidden');
       this.svgAudioOff.classList.remove('hidden');
       this.txtAudio.textContent = 'Audio Muted';
-      this.btnAudioToggle.classList.remove('text-slate-300');
+      this.btnAudioToggle.classList.remove('text-slate-200');
       this.btnAudioToggle.classList.add('text-slate-500');
     } else {
       this.svgAudioOn.classList.remove('hidden');
       this.svgAudioOff.classList.add('hidden');
       this.txtAudio.textContent = 'Audio ON';
       this.btnAudioToggle.classList.remove('text-slate-500');
-      this.btnAudioToggle.classList.add('text-slate-300');
+      this.btnAudioToggle.classList.add('text-slate-200');
+    }
+  }
+
+  private setTheme(theme: 'indigo' | 'emerald' | 'rose') {
+    document.documentElement.className = document.documentElement.className.replace(/\btheme-\S+/g, '');
+    if (theme !== 'indigo') {
+      document.documentElement.classList.add(`theme-${theme}`);
+    }
+    localStorage.setItem('vnc_theme', theme);
+
+    // Update active button styles
+    const themes: ('indigo' | 'emerald' | 'rose')[] = ['indigo', 'emerald', 'rose'];
+    themes.forEach(t => {
+      const btn = document.getElementById(`theme-${t}`);
+      if (btn) {
+        if (t === theme) {
+          btn.classList.add('bg-brand-600/30', 'border-brand-500/30');
+          btn.classList.remove('border-transparent');
+        } else {
+          btn.classList.remove('bg-brand-600/30', 'border-brand-500/30');
+          btn.classList.add('border-transparent');
+        }
+      }
+    });
+  }
+
+  private restoreState() {
+    // Restore Theme
+    const savedTheme = localStorage.getItem('vnc_theme') || 'indigo';
+    this.setTheme(savedTheme as 'indigo' | 'emerald' | 'rose');
+
+    // Restore Quality
+    const savedQuality = localStorage.getItem('vnc_quality');
+    if (savedQuality) {
+      this.sliderQuality.value = savedQuality;
+      this.valQuality.textContent = `${savedQuality}%`;
+    }
+
+    // Restore Audio
+    const savedAudio = localStorage.getItem('vnc_audio_muted');
+    if (savedAudio !== null) {
+      const isMuted = savedAudio === 'true';
+      this.toggleAudio(isMuted);
+    }
+
+    // Restore HUD Toggle state
+    const savedHUD = localStorage.getItem('vnc_hud_visible');
+    const hudToggle = document.getElementById('chk-hud-toggle') as HTMLInputElement;
+    if (hudToggle && savedHUD !== null) {
+      hudToggle.checked = savedHUD === 'true';
+      const hud = document.getElementById('metrics-hud');
+      if (hud) {
+        if (hudToggle.checked && this.connection.isConnected) {
+          hud.classList.remove('hidden');
+        } else {
+          hud.classList.add('hidden');
+        }
+      }
+    }
+  }
+
+  private async checkSessionRecovery() {
+    try {
+      // Use standard credentials to verify active session cookie
+      const res = await fetch('/api/monitors', { credentials: 'same-origin' });
+      if (res.ok) {
+        // Authenticated! Trigger token refresh call to obtain active CSRF token
+        const refreshRes = await fetch('/api/auth/refresh', {
+          method: 'POST',
+          credentials: 'same-origin'
+        });
+        if (refreshRes.ok) {
+          const data = await refreshRes.json();
+          this.csrfToken = data.csrf_token || '';
+          this.token = 'active_session';
+          this.modalAuth.classList.add('hidden');
+          this.btnLogout.classList.remove('hidden');
+
+          // Restoring parameter values
+          this.restoreState();
+
+          await this.loadMonitors();
+
+          // Restore monitor selection if saved
+          const savedMonitor = localStorage.getItem('vnc_monitor_id');
+          if (savedMonitor) {
+            this.monitorId = parseInt(savedMonitor, 10);
+            this.selectMonitor.value = savedMonitor;
+          }
+
+          this.connection.connect(this.token, this.monitorId);
+          this.clipboard.setToken(this.token);
+          this.clipboard.setCsrfToken(this.csrfToken);
+
+          const role = data.role || 'operator';
+          if (role === 'operator') {
+            this.input.enable(this.token, this.monitorId, this.csrfToken);
+            document.getElementById('btn-clipboard-send')?.removeAttribute('disabled');
+          } else {
+            this.input.disable();
+            document.getElementById('btn-clipboard-send')?.setAttribute('disabled', 'true');
+          }
+
+          this.startTokenRefresh();
+          this.btnAudioToggle.classList.remove('hidden');
+        }
+      }
+    } catch (err) {
+      console.debug('[VNC App] Session auto-recovery check failed:', err);
     }
   }
 
@@ -346,6 +593,7 @@ export class ScreenShareApp {
         'Content-Type': 'application/json',
         'X-CSRF-Token': this.csrfToken
       },
+      credentials: 'same-origin',
       body: JSON.stringify({
         type: 'key_combo',
         keys: keys,
