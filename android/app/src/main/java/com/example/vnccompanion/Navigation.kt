@@ -24,7 +24,7 @@ fun MainNavigation() {
           MainScreen(onItemClick = { navKey -> backStack.add(navKey) }, modifier = Modifier.safeDrawingPadding().padding(16.dp))
         }
         entry<Console> { key ->
-          ConsoleScreen(url = key.url)
+          ConsoleScreen(url = key.url, onBackClick = { backStack.removeLastOrNull() })
         }
       },
   )

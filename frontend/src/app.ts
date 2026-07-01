@@ -167,6 +167,11 @@ export class ScreenShareApp {
     };
     document.addEventListener('click', closeDropdowns);
     window.addEventListener('vnc-menu-collapse', closeDropdowns);
+    window.addEventListener('vnc-native-combo', (e: any) => {
+      if (Array.isArray(e.detail)) {
+        this.sendKeyCombo(e.detail);
+      }
+    });
 
     // Prevent closing when clicking inside active menus
     dropdowns.forEach(dd => {
