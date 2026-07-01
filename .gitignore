@@ -9,11 +9,17 @@ backend/logs/
 
 # Frontend ignore
 frontend/node_modules/
-frontend/dist/
 frontend/.env
 frontend/.env.local
 frontend/.env.*.local
+# dist/ is intentionally tracked so the app is visible on GitHub
 
 # OS files
 .DS_Store
 Thumbs.db
+
+# Android build outputs
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
