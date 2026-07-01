@@ -497,18 +497,23 @@ export class ConnectionManager {
       return;
     }
 
-    this.elBadge.className = 'flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-300';
+    const idlePlaceholder = document.getElementById('placeholder-idle');
+    const connectingPlaceholder = document.getElementById('placeholder-connecting');
+
+    this.elBadge.className = 'flex items-center space-x-1.5 px-2.5 py-1 rounded text-[11px] font-medium transition-all duration-300';
     const dot = this.elBadge.querySelector('span');
 
     if (state === 'connected') {
       this.elBadge.classList.add('bg-emerald-500/10', 'text-emerald-400', 'border', 'border-emerald-500/25');
       this.elText.textContent = 'Connected';
       if (dot) {
-        dot.className = 'h-2 w-2 rounded-full bg-emerald-500 animate-pulse';
+        dot.className = 'h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse';
       }
       this.elCanvas?.classList.remove('hidden');
       this.elPlaceholder?.classList.add('hidden');
       this.elSidebar?.classList.remove('hidden');
+      idlePlaceholder?.classList.add('hidden');
+      connectingPlaceholder?.classList.add('hidden');
       
       const hudChecked = (document.getElementById('chk-hud-toggle') as HTMLInputElement)?.checked ?? true;
       if (hudChecked) {
@@ -520,22 +525,26 @@ export class ConnectionManager {
       this.elBadge.classList.add('bg-amber-500/10', 'text-amber-400', 'border', 'border-amber-500/25');
       this.elText.textContent = 'Connecting...';
       if (dot) {
-        dot.className = 'h-2 w-2 rounded-full bg-amber-500 animate-ping';
+        dot.className = 'h-1.5 w-1.5 rounded-full bg-amber-500 animate-ping';
       }
       this.elCanvas?.classList.add('hidden');
       this.elPlaceholder?.classList.remove('hidden');
       this.elSidebar?.classList.add('hidden');
       this.elHUD?.classList.add('hidden');
+      idlePlaceholder?.classList.add('hidden');
+      connectingPlaceholder?.classList.remove('hidden');
     } else {
       this.elBadge.classList.add('bg-red-500/10', 'text-red-400', 'border', 'border-red-500/25');
       this.elText.textContent = 'Disconnected';
       if (dot) {
-        dot.className = 'h-2 w-2 rounded-full bg-red-500 animate-none';
+        dot.className = 'h-1.5 w-1.5 rounded-full bg-red-500 animate-none';
       }
       this.elCanvas?.classList.add('hidden');
       this.elPlaceholder?.classList.remove('hidden');
       this.elSidebar?.classList.add('hidden');
       this.elHUD?.classList.add('hidden');
+      idlePlaceholder?.classList.remove('hidden');
+      connectingPlaceholder?.classList.add('hidden');
       this.renderer.clear();
     }
   }

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Antigravity VNC Client</title>
+  <title>ScreenConnect Console</title>
   
   <!-- Preload fonts to avoid layout shift -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -81,12 +81,20 @@
           <svg class="w-3 h-3 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" /></svg>
         </button>
         <div id="menu-dropdown-commands" class="dropdown-menu p-2.5 w-52 space-y-1.5">
-          <button id="btn-key-ctrlaltdel" class="w-full text-left px-2.5 py-1.5 hover:bg-brand-600 hover:text-white rounded text-xs text-slate-350 transition-colors">Ctrl+Alt+Del</button>
-          <button id="btn-key-alttab" class="w-full text-left px-2.5 py-1.5 hover:bg-brand-600 hover:text-white rounded text-xs text-slate-350 transition-colors">Alt+Tab</button>
+          <div class="text-[9px] uppercase tracking-widest text-slate-500 font-bold px-1 pt-0.5 pb-1">System</div>
+          <button id="btn-key-ctrlaltdel" class="w-full text-left px-2.5 py-1.5 hover:bg-brand-600 hover:text-white rounded text-xs text-slate-350 transition-colors flex justify-between items-center"><span>Ctrl+Alt+Del</span><span class="font-mono text-[9px] text-slate-500">^⌥⌦</span></button>
+          <button id="btn-key-winl" class="w-full text-left px-2.5 py-1.5 hover:bg-brand-600 hover:text-white rounded text-xs text-slate-350 transition-colors flex justify-between items-center"><span>Lock Screen</span><span class="font-mono text-[9px] text-slate-500">⊞+L</span></button>
+          <button id="btn-key-wind" class="w-full text-left px-2.5 py-1.5 hover:bg-brand-600 hover:text-white rounded text-xs text-slate-350 transition-colors flex justify-between items-center"><span>Show Desktop</span><span class="font-mono text-[9px] text-slate-500">⊞+D</span></button>
+          <div class="border-t border-slate-700/60 my-1"></div>
+          <div class="text-[9px] uppercase tracking-widest text-slate-500 font-bold px-1 pt-0.5 pb-1">Navigation</div>
+          <button id="btn-key-alttab" class="w-full text-left px-2.5 py-1.5 hover:bg-brand-600 hover:text-white rounded text-xs text-slate-350 transition-colors flex justify-between items-center"><span>Alt+Tab</span><span class="font-mono text-[9px] text-slate-500">⌥⇥</span></button>
           <button id="btn-key-esc" class="w-full text-left px-2.5 py-1.5 hover:bg-brand-600 hover:text-white rounded text-xs text-slate-350 transition-colors">Escape</button>
           <button id="btn-key-tab" class="w-full text-left px-2.5 py-1.5 hover:bg-brand-600 hover:text-white rounded text-xs text-slate-350 transition-colors">Tab</button>
           <button id="btn-key-enter" class="w-full text-left px-2.5 py-1.5 hover:bg-brand-600 hover:text-white rounded text-xs text-slate-350 transition-colors">Enter</button>
           <button id="btn-key-backspace" class="w-full text-left px-2.5 py-1.5 hover:bg-brand-600 hover:text-white rounded text-xs text-slate-350 transition-colors">Backspace</button>
+          <div class="border-t border-slate-700/60 my-1"></div>
+          <div class="text-[9px] uppercase tracking-widest text-slate-500 font-bold px-1 pt-0.5 pb-1">Edit</div>
+          <button id="btn-key-ctrla" class="w-full text-left px-2.5 py-1.5 hover:bg-brand-600 hover:text-white rounded text-xs text-slate-350 transition-colors flex justify-between items-center"><span>Select All</span><span class="font-mono text-[9px] text-slate-500">^A</span></button>
         </div>
       </div>
 
@@ -115,8 +123,13 @@
       </div>
     </div>
 
-    <!-- Right: Connection Status & Collapsible Panel Controls -->
+    <!-- Right: Session Timer + Connection Status & Collapsible Panel Controls -->
     <div class="flex items-center space-x-2">
+      <!-- Session elapsed timer -->
+      <div id="session-timer" class="hidden flex items-center space-x-1.5 px-2 py-1 rounded bg-slate-800 border border-slate-700 text-[10px] font-mono text-slate-400">
+        <svg class="w-3 h-3 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+        <span id="session-timer-text">00:00:00</span>
+      </div>
       <div id="status-badge" class="flex items-center space-x-1.5 px-2.5 py-1 rounded text-[11px] font-medium bg-red-500/10 text-red-400 border border-red-500/20 transition-all duration-300">
         <span class="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse"></span>
         <span id="status-text">Disconnected</span>
@@ -156,14 +169,25 @@
 
         <!-- No Connection Placeholder -->
         <div id="canvas-placeholder" class="text-center p-8 space-y-4">
-          <div class="mx-auto w-12 h-12 rounded-full bg-slate-800/85 flex items-center justify-center border border-slate-750">
-            <svg class="w-6 h-6 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728m-9.9-2.829a5 5 0 010-7.07m7.072 0a5 5 0 010 7.07M13 12a1 1 0 11-2 0 1 1 0 012 0z" />
-            </svg>
+          <!-- Static disconnected state icon -->
+          <div id="placeholder-idle" class="space-y-4">
+            <div class="mx-auto w-16 h-16 rounded-full bg-slate-800/85 flex items-center justify-center border border-slate-700 shadow-inner">
+              <svg class="w-7 h-7 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+            </div>
+            <div>
+              <h3 class="text-sm font-semibold text-slate-300">Console Ready</h3>
+              <p class="text-[11px] text-slate-500 mt-1 max-w-xs">Verify credentials and unlock console to start ScreenConnect.</p>
+            </div>
           </div>
-          <div>
-            <h3 class="text-sm font-semibold text-slate-300">Console Ready</h3>
-            <p class="text-[11px] text-slate-500 mt-1 max-w-xs">Verify credentials and unlock console to start ScreenConnect.</p>
+          <!-- Connecting spinner (shown while WS is establishing) -->
+          <div id="placeholder-connecting" class="space-y-4 hidden">
+            <div class="mx-auto w-16 h-16 rounded-full border-2 border-slate-700 border-t-brand-500 animate-spin"></div>
+            <div>
+              <h3 class="text-sm font-semibold text-amber-400">Connecting to Session…</h3>
+              <p class="text-[11px] text-slate-500 mt-1 max-w-xs">Negotiating stream parameters with the remote host.</p>
+            </div>
           </div>
         </div>
 

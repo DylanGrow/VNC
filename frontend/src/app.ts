@@ -14,6 +14,9 @@ export class ScreenShareApp {
   private token: string | null = null;
   private monitorId = 1;
   private refreshIntervalId: number | null = null;
+  private sessionTimerIntervalId: number | null = null;
+  private sessionStartTime: number | null = null;
+  private qualityDebounceTimer: number | null = null;
   private csrfToken = '';
   private username = '';
   private remoteCursors = new Map<string, HTMLElement>();
@@ -62,7 +65,7 @@ export class ScreenShareApp {
     this.formAuth.addEventListener('submit', (e) => this.handleLogin(e));
     this.btnLogout.addEventListener('click', () => this.handleLogout());
     this.selectMonitor.addEventListener('change', () => this.handleMonitorChange());
-    this.sliderQuality.addEventListener('input', () => this.handleQualityChange());
+    this.sliderQuality.addEventListener('input', () => this.handleQualityChangeDebounced());
     this.btnFullscreen.addEventListener('click', () => this.toggleFullscreen());
     this.btnAudioToggle.addEventListener('click', () => this.toggleAudio());
 
@@ -73,6 +76,9 @@ export class ScreenShareApp {
     document.getElementById('btn-key-tab')?.addEventListener('click', () => this.sendKeyCombo(['tab']));
     document.getElementById('btn-key-enter')?.addEventListener('click', () => this.sendKeyCombo(['enter']));
     document.getElementById('btn-key-backspace')?.addEventListener('click', () => this.sendKeyCombo(['backspace']));
+    document.getElementById('btn-key-wind')?.addEventListener('click', () => this.sendKeyCombo(['super', 'd']));
+    document.getElementById('btn-key-winl')?.addEventListener('click', () => this.sendKeyCombo(['super', 'l']));
+    document.getElementById('btn-key-ctrla')?.addEventListener('click', () => this.sendKeyCombo(['ctrl', 'a']));
 
     // Diagnostics HUD Visibility Toggle
     const hudToggle = document.getElementById('chk-hud-toggle') as HTMLInputElement;
@@ -91,14 +97,18 @@ export class ScreenShareApp {
 
     // Help modal event hooks
     const helpModal = document.getElementById('help-modal');
-    document.getElementById('btn-help')?.addEventListener('click', () => {
-      helpModal?.classList.remove('hidden');
-    });
-    document.getElementById('btn-help-close')?.addEventListener('click', () => {
-      helpModal?.classList.add('hidden');
-    });
-    document.getElementById('btn-help-ok')?.addEventListener('click', () => {
-      helpModal?.classList.add('hidden');
+    const openHelp = () => helpModal?.classList.remove('hidden');
+    const closeHelp = () => helpModal?.classList.add('hidden');
+    document.getElementById('btn-help')?.addEventListener('click', openHelp);
+    document.getElementById('btn-help-close')?.addEventListener('click', closeHelp);
+    document.getElementById('btn-help-ok')?.addEventListener('click', closeHelp);
+    // '?' key shortcut opens help
+    document.addEventListener('keydown', (e) => {
+      if (e.key === '?' && !this.token) return; // only when connected
+      if (e.key === '?' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+        helpModal?.classList.toggle('hidden');
+      }
+      if (e.key === 'Escape') closeHelp();
     });
 
     // Theme selector event hooks
@@ -211,6 +221,46 @@ export class ScreenShareApp {
     this.checkSessionRecovery();
   }
 
+  private startSessionTimer() {
+    this.sessionStartTime = Date.now();
+    this.stopSessionTimer();
+    const timerEl = document.getElementById('session-timer');
+    if (timerEl) timerEl.classList.remove('hidden');
+    this.sessionTimerIntervalId = window.setInterval(() => {
+      if (!this.sessionStartTime) return;
+      const elapsed = Math.floor((Date.now() - this.sessionStartTime) / 1000);
+      const h = Math.floor(elapsed / 3600).toString().padStart(2, '0');
+      const m = Math.floor((elapsed % 3600) / 60).toString().padStart(2, '0');
+      const s = (elapsed % 60).toString().padStart(2, '0');
+      const el = document.getElementById('session-timer-text');
+      if (el) el.textContent = `${h}:${m}:${s}`;
+    }, 1000);
+  }
+
+  private stopSessionTimer() {
+    if (this.sessionTimerIntervalId !== null) {
+      window.clearInterval(this.sessionTimerIntervalId);
+      this.sessionTimerIntervalId = null;
+    }
+    this.sessionStartTime = null;
+    const timerEl = document.getElementById('session-timer');
+    if (timerEl) timerEl.classList.add('hidden');
+  }
+
+  private showToast(message: string, type: 'info' | 'warn' | 'error' = 'info') {
+    const existing = document.getElementById('vnc-toast');
+    if (existing) existing.remove();
+    const toast = document.createElement('div');
+    toast.id = 'vnc-toast';
+    const colors = type === 'error' ? 'bg-red-900/90 border-red-500/40 text-red-200'
+      : type === 'warn' ? 'bg-amber-900/90 border-amber-500/40 text-amber-200'
+      : 'bg-slate-800/95 border-slate-600/40 text-slate-200';
+    toast.className = `fixed bottom-6 right-6 z-[200] px-4 py-2.5 rounded-lg border shadow-2xl text-xs font-medium backdrop-blur transition-all duration-300 ${colors}`;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 3500);
+  }
+
   /**
    * Submit credentials to API and open VNC stream.
    */
@@ -221,6 +271,15 @@ export class ScreenShareApp {
     const role = this.chkViewer.checked ? 'viewer' : 'operator';
 
     this.elAuthError.classList.add('hidden');
+
+    // Show loading spinner on submit button
+    const submitBtn = this.formAuth.querySelector('button[type="submit"]') as HTMLButtonElement;
+    const originalBtnText = submitBtn?.textContent || 'Unlock Console';
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Connecting...';
+      submitBtn.classList.add('opacity-75', 'cursor-not-allowed');
+    }
 
     try {
       const res = await fetch('/api/auth/login', {
@@ -263,8 +322,11 @@ export class ScreenShareApp {
           document.getElementById('btn-clipboard-send')?.setAttribute('disabled', 'true');
         }
 
-        // Start background token rotation
+        // Start background token rotation and session timer
         this.startTokenRefresh();
+        this.startSessionTimer();
+        document.title = `Connected — ScreenConnect Console`;
+        this.showToast(`✓ Session started as ${role}`, 'info');
         
         // Show audio toggle controls
         this.btnAudioToggle.classList.remove('hidden');
@@ -272,6 +334,11 @@ export class ScreenShareApp {
     } catch (err) {
       console.error('[VNC App] Login exception:', err);
       this.elAuthError.classList.remove('hidden');
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = originalBtnText;
+        submitBtn.classList.remove('opacity-75', 'cursor-not-allowed');
+      }
     }
   }
 
@@ -280,6 +347,7 @@ export class ScreenShareApp {
    */
   private handleLogout() {
     this.stopTokenRefresh();
+    this.stopSessionTimer();
     this.csrfToken = '';
     this.username = '';
 
@@ -301,10 +369,9 @@ export class ScreenShareApp {
 
     // Hide diagnostics HUD on logout
     const hud = document.getElementById('metrics-hud');
-    if (hud) {
-      hud.classList.add('hidden');
-    }
+    if (hud) hud.classList.add('hidden');
 
+    document.title = 'ScreenConnect Console';
     this.modalAuth.classList.remove('hidden');
     this.btnLogout.classList.add('hidden');
     this.txtPassword.value = '';
@@ -405,11 +472,15 @@ export class ScreenShareApp {
     }
   }
 
-  private handleQualityChange() {
+
+  private handleQualityChangeDebounced() {
     const quality = parseInt(this.sliderQuality.value, 10);
     this.valQuality.textContent = `${quality}%`;
-    localStorage.setItem('vnc_quality', quality.toString());
-    this.connection.setQuality(quality);
+    if (this.qualityDebounceTimer !== null) window.clearTimeout(this.qualityDebounceTimer);
+    this.qualityDebounceTimer = window.setTimeout(() => {
+      localStorage.setItem('vnc_quality', quality.toString());
+      this.connection.setQuality(quality);
+    }, 250);
   }
 
   private toggleFullscreen() {
@@ -582,6 +653,13 @@ export class ScreenShareApp {
           }
 
           this.startTokenRefresh();
+          this.startSessionTimer();
+          document.title = `Connected — ScreenConnect Console`;
+
+          // Restore audio mute state on session recovery
+          const savedAudio = localStorage.getItem('vnc_audio_muted');
+          if (savedAudio !== null) this.toggleAudio(savedAudio === 'true');
+
           this.btnAudioToggle.classList.remove('hidden');
         }
       }
