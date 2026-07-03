@@ -1,6 +1,7 @@
 package com.example.vnccompanion.ui.main
 
 import android.content.Context
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -13,6 +14,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,6 +32,16 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation3.runtime.NavKey
 import com.example.vnccompanion.Console
 import com.example.vnccompanion.theme.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import java.net.Inet4Address
+import java.net.InetSocketAddress
+import java.net.NetworkInterface
+import java.net.Socket
 
 @Composable
 fun MainScreen(
@@ -38,21 +51,25 @@ fun MainScreen(
   val context = LocalContext.current
   val prefs = remember { context.getSharedPreferences("vnc_prefs", Context.MODE_PRIVATE) }
   val keyboard = LocalSoftwareKeyboardController.current
+  val coroutineScope = rememberCoroutineScope()
 
   var urlInput by remember { mutableStateOf(prefs.getString("last_url", "http://10.0.2.2:8000") ?: "http://10.0.2.2:8000") }
   var urlError by remember { mutableStateOf(false) }
+
+  // Subnet auto-discovery states
+  var isScanning by remember { mutableStateOf(false) }
+  val discoveredServers = remember { mutableStateListOf<String>() }
+  var hasScanned by remember { mutableStateOf(false) }
 
   // History stored most-recent-first
   val historyList = remember {
     mutableStateListOf<String>().apply {
       val saved = prefs.getStringSet("history_ordered", null)
       if (saved != null) {
-        // Ordered list stored as indexed keys
         val ordered = (0 until saved.size)
           .mapNotNull { prefs.getString("history_item_$it", null) }
         addAll(ordered)
       } else {
-        // Migrate legacy unordered set
         val legacy = prefs.getStringSet("history", emptySet()) ?: emptySet()
         addAll(legacy)
       }
@@ -74,13 +91,88 @@ fun MainScreen(
     }
     urlError = false
     keyboard?.hide()
-    // Add to front of history (most-recent first)
+    
     historyList.remove(trimmed)
     historyList.add(0, trimmed)
     if (historyList.size > 20) historyList.removeAt(historyList.size - 1)
     prefs.edit().putString("last_url", trimmed).apply()
     saveHistory()
     onItemClick(Console(trimmed))
+  }
+
+  // Network scanning utility methods
+  fun getLocalIpAddress(): String? {
+    try {
+      val interfaces = NetworkInterface.getNetworkInterfaces()
+      while (interfaces.hasMoreElements()) {
+        val networkInterface = interfaces.nextElement()
+        val addresses = networkInterface.inetAddresses
+        while (addresses.hasMoreElements()) {
+          val address = addresses.nextElement()
+          if (!address.isLoopbackAddress && address is Inet4Address) {
+            val ip = address.hostAddress
+            if (ip != null && !ip.startsWith("127.")) {
+              return ip
+            }
+          }
+        }
+      }
+    } catch (ex: Exception) {
+      ex.printStackTrace()
+    }
+    return null
+  }
+
+  fun checkIpPortOpen(ip: String, port: Int, timeout: Int): String? {
+    var socket: Socket? = null
+    try {
+      socket = Socket()
+      socket.connect(InetSocketAddress(ip, port), timeout)
+      return "http://$ip:$port"
+    } catch (e: Exception) {
+      // Unreachable
+    } finally {
+      try {
+        socket?.close()
+      } catch (e: Exception) {
+        // Ignored
+      }
+    }
+    return null
+  }
+
+  fun runNetworkDiscovery() {
+    coroutineScope.launch {
+      isScanning = true
+      hasScanned = true
+      discoveredServers.clear()
+      val localIp = getLocalIpAddress()
+      if (localIp != null && localIp.contains(".")) {
+        val subnetPrefix = localIp.substringBeforeLast(".") + "."
+        val semaphore = Semaphore(40) // 40 concurrent scans
+        val deferreds = (1..254).map { host ->
+          val ip = "$subnetPrefix$host"
+          async(Dispatchers.IO) {
+            semaphore.withPermit {
+              checkIpPortOpen(ip, 8000, timeout = 350)
+            }
+          }
+        }
+        val results = deferreds.awaitAll().filterNotNull()
+        discoveredServers.addAll(results)
+      } else {
+        // Emulator / local fallback checks
+        val fallbacks = listOf("10.0.2.2", "127.0.0.1")
+        val deferreds = fallbacks.map { ip ->
+          async(Dispatchers.IO) {
+            checkIpPortOpen(ip, 8000, timeout = 350)
+          }
+        }
+        val results = deferreds.awaitAll().filterNotNull()
+        discoveredServers.addAll(results)
+      }
+      isScanning = false
+    }
   }
 
   Column(
@@ -111,7 +203,7 @@ fun MainScreen(
     Text("ScreenConnect Console", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
     Text("Android Companion", color = Slate400, fontSize = 12.sp, letterSpacing = 1.sp)
 
-    Spacer(modifier = Modifier.height(40.dp))
+    Spacer(modifier = Modifier.height(30.dp))
 
     // URL Input
     OutlinedTextField(
@@ -156,7 +248,91 @@ fun MainScreen(
       Text("Connect to Session", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, letterSpacing = 0.3.sp)
     }
 
-    Spacer(modifier = Modifier.height(36.dp))
+    Spacer(modifier = Modifier.height(24.dp))
+
+    // --- Subnet Auto-Discovery Section ---
+    Row(
+      modifier = Modifier.fillMaxWidth(),
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Icon(Icons.Default.Wifi, contentDescription = "Subnet Discovery", tint = Sky400, modifier = Modifier.size(16.dp))
+        Text("Local Subnet Discovery", color = Slate400, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp)
+      }
+      IconButton(onClick = { runNetworkDiscovery() }, enabled = !isScanning, modifier = Modifier.size(32.dp)) {
+        Icon(Icons.Default.Refresh, contentDescription = "Scan Subnet", tint = if (isScanning) Slate700 else Sky400, modifier = Modifier.size(16.dp))
+      }
+    }
+
+    Spacer(modifier = Modifier.height(4.dp))
+
+    if (isScanning) {
+      Box(
+        modifier = Modifier
+          .fillMaxWidth()
+          .clip(RoundedCornerShape(8.dp))
+          .background(Slate800)
+          .padding(16.dp),
+        contentAlignment = Alignment.Center
+      ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          CircularProgressIndicator(color = Sky500, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+          Text("Scanning local network subnet…", color = Slate300, fontSize = 11.sp)
+        }
+      }
+    } else if (hasScanned) {
+      if (discoveredServers.isNotEmpty()) {
+        Card(
+          colors = CardDefaults.cardColors(containerColor = Slate800),
+          modifier = Modifier.fillMaxWidth(),
+          shape = RoundedCornerShape(8.dp)
+        ) {
+          Column(modifier = Modifier.padding(12.dp)) {
+            discoveredServers.forEach { server ->
+              Row(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .clickable { urlInput = server }
+                  .padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+              ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                  Box(
+                    modifier = Modifier
+                      .size(8.dp)
+                      .clip(RoundedCornerShape(4.dp))
+                      .background(Emerald500)
+                  )
+                  Text(server, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                }
+                TextButton(
+                  onClick = { connect(server) },
+                  contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                  colors = ButtonDefaults.textButtonColors(contentColor = Sky400)
+                ) {
+                  Text("Quick Connect", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+              }
+            }
+          }
+        }
+      } else {
+        Box(
+          modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(Slate800)
+            .padding(12.dp),
+          contentAlignment = Alignment.Center
+        ) {
+          Text("No active servers found on subnet.", color = Slate400, fontSize = 11.sp)
+        }
+      }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
 
     // History section
     if (historyList.isNotEmpty()) {
@@ -179,7 +355,7 @@ fun MainScreen(
 
       Spacer(modifier = Modifier.height(8.dp))
 
-      LazyColumn(modifier = Modifier.fillMaxWidth()) {
+      LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
         itemsIndexed(historyList, key = { _, item -> item }) { index, item ->
           Card(
             colors = CardDefaults.cardColors(containerColor = Slate800),
@@ -232,7 +408,7 @@ fun MainScreen(
       }
     } else {
       // Empty state
-      Spacer(modifier = Modifier.height(24.dp))
+      Spacer(modifier = Modifier.height(8.dp))
       Box(
         modifier = Modifier
           .fillMaxWidth()
@@ -246,8 +422,7 @@ fun MainScreen(
           Text("Enter a server URL above to get started", color = Slate700, fontSize = 11.sp)
         }
       }
+      Spacer(modifier = Modifier.height(24.dp))
     }
-
-    Spacer(modifier = Modifier.height(24.dp))
   }
 }
