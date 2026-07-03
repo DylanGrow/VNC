@@ -45,6 +45,10 @@ MAX_GLOBAL = int(os.getenv("MAX_GLOBAL_CONNECTIONS", "10"))
 connection_manager = ConnectionManager(max_per_ip=MAX_PER_IP, max_global=MAX_GLOBAL)
 screen_capture = ScreenCapture()
 input_validator = InputValidator()
+
+# Android screen share publishing globals
+ANDROID_SCREEN_STREAM = None
+ANDROID_STREAM_LOCK = asyncio.Lock()
 metrics_collector = MetricsCollector()
 clipboard_manager = ClipboardManager()
 audit_logger = AuditLogger()
@@ -371,7 +375,17 @@ async def refresh_token(request: Request, current_user: TokenData = Depends(veri
 @app.get("/monitors")
 async def list_monitors(current_user: TokenData = Depends(verify_token)):
     """Returns a list of connected visual displays."""
-    return {"monitors": screen_capture.get_monitors()}
+    monitors = screen_capture.get_monitors()
+    async with ANDROID_STREAM_LOCK:
+        if ANDROID_SCREEN_STREAM is not None:
+            monitors.append({
+                "id": 99,
+                "width": 720,
+                "height": 1280,
+                "is_primary": False,
+                "name": "Android Screen Share"
+            })
+    return {"monitors": monitors}
 
 # ------------------ Screen Sharing WebSocket ------------------
 async def client_reader(websocket: WebSocket, session_config: dict):
@@ -446,11 +460,15 @@ async def client_reader(websocket: WebSocket, session_config: dict):
                             continue
 
                         monitor_id = msg.get("monitorId", 1)
-                        monitors = screen_capture.get_monitors()
-                        if monitor_id < 1 or monitor_id >= len(monitors):
-                            monitor_id = 1
-                        w = monitors[monitor_id]["width"]
-                        h = monitors[monitor_id]["height"]
+                        if monitor_id == 99:
+                            w = 720
+                            h = 1280
+                        else:
+                            monitors = screen_capture.get_monitors()
+                            if monitor_id < 1 or monitor_id >= len(monitors):
+                                monitor_id = 1
+                            w = monitors[monitor_id]["width"]
+                            h = monitors[monitor_id]["height"]
 
                         try:
                             global LAST_INPUT_TIME
@@ -486,6 +504,26 @@ async def client_reader(websocket: WebSocket, session_config: dict):
                 logger.error(f"Socket reader: Error processing client packet: {e}")
     except asyncio.CancelledError:
         pass
+
+@app.websocket("/ws/publish-screen")
+async def websocket_publish_screen(websocket: WebSocket):
+    """WebSocket endpoint where Android companion app streams its screen frames."""
+    global ANDROID_SCREEN_STREAM
+    client_ip = websocket.client[0] if websocket.client else "unknown"
+    try:
+        await websocket.accept()
+        logger.info(f"Android screen publisher connected from {client_ip}")
+        while True:
+            # Receive binary image frames from the Android publisher
+            data = await websocket.receive_bytes()
+            if data:
+                async with ANDROID_STREAM_LOCK:
+                    ANDROID_SCREEN_STREAM = data
+    except Exception as e:
+        logger.info(f"Android screen publisher disconnected: {e}")
+    finally:
+        async with ANDROID_STREAM_LOCK:
+            ANDROID_SCREEN_STREAM = None
 
 @app.websocket("/ws/screen/{monitor_id}")
 async def websocket_screen(websocket: WebSocket, monitor_id: int = 1):
@@ -581,9 +619,24 @@ async def websocket_screen(websocket: WebSocket, monitor_id: int = 1):
                 base_delay = 0.033  # 30 FPS
 
             # Capture screen image frame (returns Base64 string, has_changed status, and tile coordinates)
-            frame_data, has_changed, tx, ty, tw, th, is_delta = screen_capture.capture(
-                monitor_id, quality=quality, resolution=(target_w, target_h)
-            )
+            if monitor_id == 99:
+                import base64
+                async with ANDROID_STREAM_LOCK:
+                    if ANDROID_SCREEN_STREAM is not None:
+                        frame_data = base64.b64encode(ANDROID_SCREEN_STREAM).decode("utf-8")
+                        has_changed = True
+                        tx, ty, tw, th, is_delta = 0, 0, 720, 1280, False
+                    else:
+                        frame_data = None
+                        has_changed = False
+                        tx, ty, tw, th, is_delta = 0, 0, 0, 0, False
+                if frame_data is None:
+                    await asyncio.sleep(0.1)
+                    continue
+            else:
+                frame_data, has_changed, tx, ty, tw, th, is_delta = screen_capture.capture(
+                    monitor_id, quality=quality, resolution=(target_w, target_h)
+                )
             
             if has_changed or (time.time() - LAST_INPUT_TIME < 1.5):
                 idle_frames = 0
@@ -592,10 +645,10 @@ async def websocket_screen(websocket: WebSocket, monitor_id: int = 1):
                 idle_frames += 1
                 if idle_frames > 150:
                     sleep_delay = 0.200 # Idle frame decelerator: drop to 5 FPS
-
+ 
             # Send frame if updated, or force update once every 60 frames as keep-alive
             if frame_data and (has_changed or frame_sequence % 60 == 0):
-                if not has_changed and frame_sequence % 60 == 0:
+                if not has_changed and frame_sequence % 60 == 0 and monitor_id != 99:
                     # Force full frame on keepalive updates
                     frame_data, _, tx, ty, tw, th, is_delta = screen_capture.capture(
                         monitor_id, quality=quality, resolution=(target_w, target_h), force_full=True
@@ -716,9 +769,12 @@ async def handle_input(data: dict, current_user: TokenData = Depends(verify_toke
 
     try:
         monitor_id = data.get("monitorId", 1)
-        monitors = screen_capture.get_monitors()
-        monitor = next((m for m in monitors if m["id"] == monitor_id), monitors[0])
-        w, h = monitor["width"], monitor["height"]
+        if monitor_id == 99:
+            w, h = 720, 1280
+        else:
+            monitors = screen_capture.get_monitors()
+            monitor = next((m for m in monitors if m["id"] == monitor_id), monitors[0])
+            w, h = monitor["width"], monitor["height"]
         
         result = await asyncio.to_thread(input_validator.validate_and_execute, data, w, h)
         metrics_collector.log_input(data.get("type", "unknown"))

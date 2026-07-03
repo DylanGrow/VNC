@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation3.runtime.NavKey
 import com.example.vnccompanion.Console
+import com.example.vnccompanion.data.ScreenShareState
 import com.example.vnccompanion.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -329,6 +330,73 @@ fun MainScreen(
         ) {
           Text("No active servers found on subnet.", color = Slate400, fontSize = 11.sp)
         }
+      }
+    }
+
+    Spacer(modifier = Modifier.height(16.dp))
+
+    // --- Screen Share Section ---
+    val activity = context as? com.example.vnccompanion.MainActivity
+    val isSharingScreen by ScreenShareState.isSharing
+
+    Card(
+      colors = CardDefaults.cardColors(containerColor = Slate800),
+      modifier = Modifier.fillMaxWidth(),
+      shape = RoundedCornerShape(8.dp)
+    ) {
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+          Icon(
+            imageVector = Icons.Default.Wifi,
+            contentDescription = "Screen Share",
+            tint = if (isSharingScreen) Emerald500 else Slate400,
+            modifier = Modifier.size(20.dp)
+          )
+          Column {
+            Text(
+              text = "Share Phone Screen",
+              color = Color.White,
+              fontSize = 13.sp,
+              fontWeight = FontWeight.Bold
+            )
+            Text(
+              text = if (isSharingScreen) "Streaming live to VNC Server" else "Broadcast mobile viewport",
+              color = if (isSharingScreen) Emerald500 else Slate400,
+              fontSize = 10.sp
+            )
+          }
+        }
+        Switch(
+          checked = isSharingScreen,
+          onCheckedChange = { checked ->
+            if (checked) {
+              val trimmed = urlInput.trim()
+              if (trimmed.isEmpty() || (!trimmed.startsWith("http://") && !trimmed.startsWith("https://"))) {
+                urlError = true
+              } else {
+                urlError = false
+                activity?.requestScreenCapture(trimmed)
+              }
+            } else {
+              activity?.stopScreenCapture()
+            }
+          },
+          colors = SwitchDefaults.colors(
+            checkedThumbColor = Color.White,
+            checkedTrackColor = Sky600,
+            uncheckedThumbColor = Slate400,
+            uncheckedTrackColor = Slate900
+          )
+        )
       }
     }
 
