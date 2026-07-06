@@ -216,6 +216,59 @@ export class ScreenShareApp {
       });
     }, 2000);
 
+    // Terminal Command Runner Bindings
+    const btnTermRun = document.getElementById('btn-terminal-run');
+    const txtTermCmd = document.getElementById('txt-terminal-cmd') as HTMLInputElement;
+    const preTermOutput = document.getElementById('pre-terminal-output');
+
+    const runTerminalCommand = async () => {
+      if (!this.token) return;
+      const command = txtTermCmd?.value.trim();
+      if (!command) return;
+
+      if (btnTermRun) {
+        btnTermRun.setAttribute('disabled', 'true');
+        btnTermRun.textContent = '...';
+      }
+      if (preTermOutput) {
+        preTermOutput.classList.remove('hidden');
+        preTermOutput.textContent = 'Executing command on Host...\n';
+      }
+
+      try {
+        const res = await fetch('/api/terminal/execute', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': this.csrfToken
+          },
+          credentials: 'same-origin',
+          body: JSON.stringify({ command })
+        });
+        const data = await res.json();
+        if (preTermOutput) {
+          preTermOutput.textContent = data.output || 'Command completed with no output.';
+          preTermOutput.scrollTop = preTermOutput.scrollHeight;
+        }
+      } catch (err: any) {
+        if (preTermOutput) {
+          preTermOutput.textContent = `Error: ${err.message || err}`;
+        }
+      } finally {
+        if (btnTermRun) {
+          btnTermRun.removeAttribute('disabled');
+          btnTermRun.textContent = 'Run';
+        }
+      }
+    };
+
+    btnTermRun?.addEventListener('click', runTerminalCommand);
+    txtTermCmd?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        runTerminalCommand();
+      }
+    });
+
     // Restore user-customized options and check for active session
     this.restoreState();
     this.checkSessionRecovery();

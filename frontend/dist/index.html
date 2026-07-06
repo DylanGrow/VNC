@@ -14,8 +14,8 @@
   
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
-  <script type="module" crossorigin src="/assets/main-DBQ6ib12.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/main-KYydp6vU.css">
+  <script type="module" crossorigin src="/assets/main-xVDEE9D8.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/main-Z7qOHFKJ.css">
 </head>
 <body class="h-full font-sans antialiased overflow-hidden flex flex-col bg-slate-900">
 
@@ -250,6 +250,24 @@
             <button id="btn-clipboard-recv" class="flex-1 bg-slate-800 hover:bg-slate-750 text-slate-300 font-semibold py-1 px-1.5 rounded text-[10px] transition-colors">
               Fetch from Host
             </button>
+          </div>
+        </div>
+
+        <!-- Terminal Command Runner -->
+        <div class="border-t border-slate-800 pt-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-350">Quick Shell Runner</h3>
+            <span class="text-[9px] text-brand-400 font-mono font-semibold">Background Exec</span>
+          </div>
+          <div class="bg-slate-950/60 rounded border border-slate-800 p-2.5 space-y-2">
+            <div class="flex space-x-1">
+              <input id="txt-terminal-cmd" type="text" placeholder="e.g. ipconfig, systeminfo" aria-label="Terminal Command" class="flex-1 bg-transparent border-0 text-[11px] focus:ring-0 p-0 text-slate-300 placeholder-slate-600 focus:outline-none font-mono">
+              <button id="btn-terminal-run" aria-label="Run Terminal Command" class="bg-brand-600 hover:bg-brand-500 text-white font-bold px-2.5 py-1 rounded text-[10px] transition-colors">
+                Run
+              </button>
+            </div>
+            <!-- Monospace terminal output container -->
+            <pre id="pre-terminal-output" class="w-full max-h-36 overflow-y-auto bg-black/40 rounded border border-slate-900/60 p-2 text-[9px] font-mono text-slate-400 whitespace-pre-wrap select-text hidden">Ready.</pre>
           </div>
         </div>
 

@@ -809,6 +809,53 @@ async def get_clipboard(current_user: TokenData = Depends(verify_token)):
     text = await asyncio.to_thread(clipboard_manager.get_text)
     return {"data": text}
 
+# ------------------ Remote Command Runner API ------------------
+@app.post("/terminal/execute")
+async def execute_terminal_command(
+    data: dict,
+    current_user: TokenData = Depends(verify_token),
+    request: Request = None
+):
+    """Executes a terminal shell command on the host and returns output."""
+    if current_user.role not in ["operator", "administrator"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions to run background commands."
+        )
+
+    command = data.get("command", "").strip()
+    if not command:
+        raise HTTPException(status_code=400, detail="Command content cannot be empty.")
+
+    client_ip = request.client.host if request and request.client else "unknown"
+    await audit_logger.log_event("remote_shell_execute", {
+        "username": current_user.sub,
+        "ip": client_ip,
+        "command": command
+    })
+
+    try:
+        # Run command securely in async subprocess shell
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+        
+        # Decode output bytes (using replace to ignore codec errors safely)
+        output_str = stdout.decode("utf-8", errors="replace") + stderr.decode("utf-8", errors="replace")
+        return {
+            "output": output_str,
+            "exit_code": proc.returncode
+        }
+    except Exception as e:
+        logger.error(f"Failed to execute command '{command}': {e}")
+        return {
+            "output": f"Internal execution error: {str(e)}",
+            "exit_code": -1
+        }
+
 # ------------------ Health & Telemetry ------------------
 @app.get("/metrics")
 async def get_metrics(current_user: TokenData = Depends(verify_token)):
