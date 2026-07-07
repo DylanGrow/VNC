@@ -269,6 +269,100 @@ export class ScreenShareApp {
       }
     });
 
+    // Drag and Drop File Upload Bindings
+    const canvasContainer = document.getElementById('canvas-container');
+    const uploadOverlay = document.getElementById('upload-overlay');
+    const uploadStatusText = document.getElementById('upload-status-text');
+    const uploadProgressText = document.getElementById('upload-progress-text');
+
+    let dragCounter = 0;
+
+    canvasContainer?.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      dragCounter++;
+      if (this.token && uploadOverlay) {
+        uploadOverlay.classList.remove('hidden');
+      }
+    });
+
+    canvasContainer?.addEventListener('dragover', (e) => {
+      e.preventDefault();
+    });
+
+    canvasContainer?.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      dragCounter--;
+      if (dragCounter <= 0 && uploadOverlay) {
+        uploadOverlay.classList.add('hidden');
+        dragCounter = 0;
+      }
+    });
+
+    canvasContainer?.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      dragCounter = 0;
+      if (uploadOverlay) uploadOverlay.classList.add('hidden');
+
+      if (!this.token) {
+        this.showToast('You must be authenticated to upload files.', 'error');
+        return;
+      }
+
+      const files = e.dataTransfer?.files;
+      if (!files || files.length === 0) return;
+
+      const file = files[0];
+      
+      // Open overlay to show progress
+      if (uploadOverlay && uploadStatusText && uploadProgressText) {
+        uploadStatusText.textContent = `Uploading ${file.name}...`;
+        uploadProgressText.textContent = '0%';
+        uploadOverlay.classList.remove('hidden');
+      }
+
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/file/upload', true);
+        xhr.setRequestHeader('X-CSRF-Token', this.csrfToken || '');
+
+        xhr.upload.onprogress = (evt) => {
+          if (evt.lengthComputable) {
+            const percentComplete = Math.round((evt.loaded / evt.total) * 100);
+            if (uploadProgressText) {
+              uploadProgressText.textContent = `${percentComplete}%`;
+            }
+          }
+        };
+
+        xhr.onload = () => {
+          if (uploadOverlay) uploadOverlay.classList.add('hidden');
+          if (xhr.status === 200 || xhr.status === 201) {
+            this.showToast(`✓ File "${file.name}" uploaded to Downloads/`, 'success');
+          } else {
+            let errorMsg = 'Upload failed';
+            try {
+              const resJson = JSON.parse(xhr.responseText);
+              errorMsg = resJson.detail || errorMsg;
+            } catch (err) {}
+            this.showToast(errorMsg, 'error');
+          }
+        };
+
+        xhr.onerror = () => {
+          if (uploadOverlay) uploadOverlay.classList.add('hidden');
+          this.showToast('Network error during file upload', 'error');
+        };
+
+        xhr.send(formData);
+      } catch (err: any) {
+        if (uploadOverlay) uploadOverlay.classList.add('hidden');
+        this.showToast(err.message || 'Failed to start file upload', 'error');
+      }
+    });
+
     // Restore user-customized options and check for active session
     this.restoreState();
     this.checkSessionRecovery();
@@ -300,14 +394,15 @@ export class ScreenShareApp {
     if (timerEl) timerEl.classList.add('hidden');
   }
 
-  private showToast(message: string, type: 'info' | 'warn' | 'error' = 'info') {
+  private showToast(message: string, type: 'info' | 'warn' | 'error' | 'success' = 'info') {
     const existing = document.getElementById('vnc-toast');
     if (existing) existing.remove();
     const toast = document.createElement('div');
     toast.id = 'vnc-toast';
-    const colors = type === 'error' ? 'bg-red-900/90 border-red-500/40 text-red-200'
-      : type === 'warn' ? 'bg-amber-900/90 border-amber-500/40 text-amber-200'
-      : 'bg-slate-800/95 border-slate-600/40 text-slate-200';
+    const colors = type === 'error' ? 'bg-red-950/90 border-red-500/35 text-red-200'
+      : type === 'warn' ? 'bg-amber-950/90 border-amber-500/35 text-amber-200'
+      : type === 'success' ? 'bg-emerald-950/90 border-emerald-500/35 text-emerald-200'
+      : 'bg-slate-900/95 border-slate-700/60 text-slate-200';
     toast.className = `fixed bottom-6 right-6 z-[200] px-4 py-2.5 rounded-lg border shadow-2xl text-xs font-medium backdrop-blur transition-all duration-300 ${colors}`;
     toast.textContent = message;
     document.body.appendChild(toast);

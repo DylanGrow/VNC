@@ -1,5 +1,5 @@
 # backend/main.py
-from fastapi import FastAPI, WebSocket, HTTPException, Request, Depends, status
+from fastapi import FastAPI, WebSocket, HTTPException, Request, Depends, status, UploadFile, File
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -855,6 +855,72 @@ async def execute_terminal_command(
             "output": f"Internal execution error: {str(e)}",
             "exit_code": -1
         }
+
+def get_downloads_dir():
+    """Dynamically resolves the host user's Downloads directory, fallback to home."""
+    from pathlib import Path
+    home = Path.home()
+    downloads = home / "Downloads"
+    try:
+        downloads.mkdir(parents=True, exist_ok=True)
+        return downloads
+    except Exception:
+        return home
+
+# ------------------ Remote File Transfer API ------------------
+@app.post("/file/upload")
+async def upload_file_to_host(
+    file: UploadFile = File(...),
+    current_user: TokenData = Depends(verify_token),
+    request: Request = None
+):
+    """Receives binary stream and saves it to the host Downloads directory."""
+    if current_user.role not in ["operator", "administrator"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions to upload files to host."
+        )
+
+    from pathlib import Path
+    filename = Path(file.filename).name
+    if not filename:
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+
+    dest_dir = get_downloads_dir()
+    dest_path = dest_dir / filename
+
+    client_ip = request.client.host if request and request.client else "unknown"
+    await audit_logger.log_event("file_upload_start", {
+        "username": current_user.sub,
+        "ip": client_ip,
+        "filename": filename,
+        "destination": str(dest_path)
+    })
+
+    try:
+        # Stream the file to disk in chunks to optimize memory utilization
+        with open(dest_path, "wb") as f:
+            while True:
+                chunk = await file.read(1024 * 1024)  # 1MB chunks
+                if not chunk:
+                    break
+                f.write(chunk)
+        
+        await audit_logger.log_event("file_upload_success", {
+            "username": current_user.sub,
+            "ip": client_ip,
+            "filename": filename,
+            "size_bytes": dest_path.stat().st_size
+        })
+        return {"status": "success", "filename": filename, "path": str(dest_path)}
+    except Exception as e:
+        logger.error(f"File upload error for '{filename}': {e}")
+        if dest_path.exists():
+            try:
+                dest_path.unlink()
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=f"File save error: {str(e)}")
 
 # ------------------ Health & Telemetry ------------------
 @app.get("/metrics")
