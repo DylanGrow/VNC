@@ -922,6 +922,60 @@ async def upload_file_to_host(
                 pass
         raise HTTPException(status_code=500, detail=f"File save error: {str(e)}")
 
+# ------------------ Host System Info API ------------------
+def get_clean_cpu_name() -> str:
+    """Queries OS specific APIs to resolve clean human-readable CPU string name."""
+    import platform
+    try:
+        if platform.system() == "Windows":
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+            cpu_name, _ = winreg.QueryValueEx(key, "ProcessorNameString")
+            return cpu_name.strip()
+    except Exception:
+        pass
+    return platform.processor() or "Unknown CPU"
+
+@app.get("/system/info")
+async def get_system_info(current_user: TokenData = Depends(verify_token)):
+    """Returns host machine Operating System, CPU model, Memory load, and Storage metrics."""
+    import platform
+    import psutil
+    
+    os_name = f"{platform.system()} {platform.release()}"
+    cpu_name = get_clean_cpu_name()
+    
+    mem = psutil.virtual_memory()
+    memory_info = {
+        "used_gb": mem.used / (1024 ** 3),
+        "total_gb": mem.total / (1024 ** 3),
+        "percent": mem.percent
+    }
+    
+    try:
+        path = "C:\\" if platform.system() == "Windows" else "/"
+        disk = psutil.disk_usage(path)
+        storage_info = {
+            "used_gb": disk.used / (1024 ** 3),
+            "total_gb": disk.total / (1024 ** 3),
+            "percent": disk.percent,
+            "free_gb": disk.free / (1024 ** 3)
+        }
+    except Exception:
+        storage_info = {
+            "used_gb": 0.0,
+            "total_gb": 0.0,
+            "percent": 0.0,
+            "free_gb": 0.0
+        }
+
+    return {
+        "os": os_name,
+        "cpu": cpu_name,
+        "memory": memory_info,
+        "storage": storage_info
+    }
+
 # ------------------ Health & Telemetry ------------------
 @app.get("/metrics")
 async def get_metrics(current_user: TokenData = Depends(verify_token)):

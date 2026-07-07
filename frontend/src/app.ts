@@ -16,6 +16,7 @@ export class ScreenShareApp {
   private refreshIntervalId: number | null = null;
   private sessionTimerIntervalId: number | null = null;
   private sessionStartTime: number | null = null;
+  private hardwareIntervalId: number | null = null;
   private qualityDebounceTimer: number | null = null;
   private csrfToken = '';
   private username = '';
@@ -363,6 +364,8 @@ export class ScreenShareApp {
       }
     });
 
+    document.getElementById('btn-hardware-refresh')?.addEventListener('click', () => this.fetchSystemInfo());
+
     // Restore user-customized options and check for active session
     this.restoreState();
     this.checkSessionRecovery();
@@ -382,6 +385,7 @@ export class ScreenShareApp {
       const el = document.getElementById('session-timer-text');
       if (el) el.textContent = `${h}:${m}:${s}`;
     }, 1000);
+    this.startHardwarePolling();
   }
 
   private stopSessionTimer() {
@@ -392,6 +396,7 @@ export class ScreenShareApp {
     this.sessionStartTime = null;
     const timerEl = document.getElementById('session-timer');
     if (timerEl) timerEl.classList.add('hidden');
+    this.stopHardwarePolling();
   }
 
   private showToast(message: string, type: 'info' | 'warn' | 'error' | 'success' = 'info') {
@@ -831,5 +836,67 @@ export class ScreenShareApp {
         monitorId: this.monitorId
       })
     }).catch(err => console.error('[VNC App] Failed to send key combo:', err));
+  }
+
+  private async fetchSystemInfo() {
+    if (!this.token) return;
+    try {
+      const res = await fetch('/api/system/info', {
+        headers: {
+          'X-CSRF-Token': this.csrfToken || ''
+        },
+        credentials: 'same-origin'
+      });
+      if (res.status === 401) return;
+      const data = await res.json();
+      
+      const elOs = document.getElementById('hw-os');
+      const elCpu = document.getElementById('hw-cpu');
+      const elLblRam = document.getElementById('lbl-hw-ram');
+      const elBarRam = document.getElementById('bar-hw-ram');
+      const elLblDisk = document.getElementById('lbl-hw-disk');
+      const elBarDisk = document.getElementById('bar-hw-disk');
+
+      if (elOs) elOs.textContent = data.os || 'Unknown OS';
+      if (elCpu) {
+        elCpu.textContent = data.cpu || 'Unknown CPU';
+        elCpu.title = data.cpu || '';
+      }
+
+      if (data.memory) {
+        const mem = data.memory;
+        if (elLblRam) elLblRam.textContent = `${mem.used_gb.toFixed(1)} / ${mem.total_gb.toFixed(1)} GB (${mem.percent.toFixed(0)}%)`;
+        if (elBarRam) {
+          elBarRam.style.width = `${mem.percent}%`;
+          elBarRam.className = `h-full rounded transition-all duration-500 ` + 
+            (mem.percent > 85 ? 'bg-rose-500' : mem.percent > 65 ? 'bg-amber-500' : 'bg-brand-500');
+        }
+      }
+
+      if (data.storage) {
+        const disk = data.storage;
+        if (elLblDisk) elLblDisk.textContent = `${disk.used_gb.toFixed(1)} / ${disk.total_gb.toFixed(1)} GB (${disk.percent.toFixed(0)}%)`;
+        if (elBarDisk) {
+          elBarDisk.style.width = `${disk.percent}%`;
+          elBarDisk.className = `h-full rounded transition-all duration-500 ` + 
+            (disk.percent > 90 ? 'bg-rose-500' : disk.percent > 75 ? 'bg-amber-500' : 'bg-brand-500');
+        }
+      }
+    } catch (err) {
+      console.debug('[VNC App] Failed to fetch system info:', err);
+    }
+  }
+
+  private startHardwarePolling() {
+    this.stopHardwarePolling();
+    this.fetchSystemInfo();
+    this.hardwareIntervalId = window.setInterval(() => this.fetchSystemInfo(), 10000);
+  }
+
+  private stopHardwarePolling() {
+    if (this.hardwareIntervalId) {
+      clearInterval(this.hardwareIntervalId);
+      this.hardwareIntervalId = null;
+    }
   }
 }
