@@ -85,4 +85,7 @@ dependencies {
 
   // OkHttp for WebSockets
   implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+  // Biometric auth (fingerprint / face unlock)
+  implementation("androidx.biometric:biometric:1.2.0-alpha05")
 }

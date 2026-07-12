@@ -10,6 +10,7 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.ui.NavDisplay
 import com.example.vnccompanion.ui.main.MainScreen
 import com.example.vnccompanion.ui.console.ConsoleScreen
+import com.example.vnccompanion.ui.settings.SettingsScreen
 
 @Composable
 fun MainNavigation() {
@@ -21,10 +22,16 @@ fun MainNavigation() {
     entryProvider =
       entryProvider {
         entry<Main> {
-          MainScreen(onItemClick = { navKey -> backStack.add(navKey) }, modifier = Modifier.safeDrawingPadding().padding(16.dp))
+          MainScreen(
+            onItemClick = { navKey -> backStack.add(navKey) },
+            modifier = Modifier.safeDrawingPadding().padding(16.dp)
+          )
         }
         entry<Console> { key ->
           ConsoleScreen(url = key.url, onBackClick = { backStack.removeLastOrNull() })
+        }
+        entry<Settings> {
+          SettingsScreen(onBack = { backStack.removeLastOrNull() })
         }
       },
   )

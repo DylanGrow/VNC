@@ -5,3 +5,4 @@ import kotlinx.serialization.Serializable
 
 @Serializable data object Main : NavKey
 @Serializable data class Console(val url: String) : NavKey
+@Serializable data object Settings : NavKey

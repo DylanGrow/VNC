@@ -54,7 +54,8 @@ class ScreenCaptureService : Service() {
   private var isConnecting = false
 
   private var lastFrameTime = 0L
-  private val frameIntervalMs = 80L // ~12-15 FPS is optimal for mobile bandwidth
+  private var frameIntervalMs = 80L // dynamically updated from user settings
+  private var jpegQuality = 65       // dynamically updated from user settings
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -92,6 +93,13 @@ class ScreenCaptureService : Service() {
   private fun startScreenCapture(resultCode: Int, data: Intent, serverUrl: String) {
     Log.i(TAG, "Starting screen capture foreground service...")
     ScreenShareState.isSharing.value = true
+
+    // Read user settings from SharedPreferences
+    val prefs = getSharedPreferences("vnc_prefs", 0)
+    val fps = prefs.getInt("screen_share_fps", 12).coerceIn(1, 60)
+    frameIntervalMs = (1000L / fps)
+    jpegQuality = prefs.getInt("screen_share_quality", 65).coerceIn(10, 95)
+    Log.i(TAG, "Screen share: $fps FPS (${frameIntervalMs}ms interval), JPEG quality=$jpegQuality")
     
     
     // Create persistent Notification
@@ -167,9 +175,9 @@ class ScreenCaptureService : Service() {
         val croppedBitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height)
         bitmap.recycle()
 
-        // Compress to JPEG
+        // Compress to JPEG using user-configured quality
         val outStream = ByteArrayOutputStream()
-        croppedBitmap.compress(Bitmap.CompressFormat.JPEG, 65, outStream)
+        croppedBitmap.compress(Bitmap.CompressFormat.JPEG, jpegQuality, outStream)
         croppedBitmap.recycle()
 
         val jpegBytes = outStream.toByteArray()

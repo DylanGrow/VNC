@@ -1,7 +1,6 @@
 package com.example.vnccompanion.ui.main
 
 import android.content.Context
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -15,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -29,8 +29,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.NavKey
 import com.example.vnccompanion.Console
+import com.example.vnccompanion.Settings
 import com.example.vnccompanion.data.ScreenShareState
 import com.example.vnccompanion.theme.*
 import kotlinx.coroutines.Dispatchers
@@ -47,61 +49,30 @@ import java.net.Socket
 @Composable
 fun MainScreen(
   onItemClick: (NavKey) -> Unit,
-  modifier: Modifier = Modifier
+  modifier: Modifier = Modifier,
+  vm: MainViewModel = viewModel()
 ) {
   val context = LocalContext.current
-  val prefs = remember { context.getSharedPreferences("vnc_prefs", Context.MODE_PRIVATE) }
   val keyboard = LocalSoftwareKeyboardController.current
   val coroutineScope = rememberCoroutineScope()
 
-  var urlInput by remember { mutableStateOf(prefs.getString("last_url", "http://10.0.2.2:8000") ?: "http://10.0.2.2:8000") }
-  var urlError by remember { mutableStateOf(false) }
+  // Initialise ViewModel with context once
+  LaunchedEffect(Unit) { vm.init(context) }
 
-  // Subnet auto-discovery states
-  var isScanning by remember { mutableStateOf(false) }
-  val discoveredServers = remember { mutableStateListOf<String>() }
-  var hasScanned by remember { mutableStateOf(false) }
-
-  // History stored most-recent-first
-  val historyList = remember {
-    mutableStateListOf<String>().apply {
-      val saved = prefs.getStringSet("history_ordered", null)
-      if (saved != null) {
-        val ordered = (0 until saved.size)
-          .mapNotNull { prefs.getString("history_item_$it", null) }
-        addAll(ordered)
-      } else {
-        val legacy = prefs.getStringSet("history", emptySet()) ?: emptySet()
-        addAll(legacy)
-      }
-    }
-  }
-
-  fun saveHistory() {
-    val editor = prefs.edit()
-    editor.putStringSet("history_ordered", historyList.mapIndexed { i, _ -> i.toString() }.toSet())
-    historyList.forEachIndexed { i, url -> editor.putString("history_item_$i", url) }
-    editor.apply()
-  }
+  val uiState by vm.uiState.collectAsState()
 
   fun connect(url: String) {
     val trimmed = url.trim()
     if (trimmed.isEmpty() || (!trimmed.startsWith("http://") && !trimmed.startsWith("https://"))) {
-      urlError = true
+      vm.setUrlError(true)
       return
     }
-    urlError = false
+    vm.setUrlError(false)
     keyboard?.hide()
-    
-    historyList.remove(trimmed)
-    historyList.add(0, trimmed)
-    if (historyList.size > 20) historyList.removeAt(historyList.size - 1)
-    prefs.edit().putString("last_url", trimmed).apply()
-    saveHistory()
+    vm.addToHistory(trimmed)
     onItemClick(Console(trimmed))
   }
 
-  // Network scanning utility methods
   fun getLocalIpAddress(): String? {
     try {
       val interfaces = NetworkInterface.getNetworkInterfaces()
@@ -112,67 +83,47 @@ fun MainScreen(
           val address = addresses.nextElement()
           if (!address.isLoopbackAddress && address is Inet4Address) {
             val ip = address.hostAddress
-            if (ip != null && !ip.startsWith("127.")) {
-              return ip
-            }
+            if (ip != null && !ip.startsWith("127.")) return ip
           }
         }
       }
-    } catch (ex: Exception) {
-      ex.printStackTrace()
-    }
+    } catch (ex: Exception) { ex.printStackTrace() }
     return null
   }
 
   fun checkIpPortOpen(ip: String, port: Int, timeout: Int): String? {
     var socket: Socket? = null
-    try {
+    return try {
       socket = Socket()
       socket.connect(InetSocketAddress(ip, port), timeout)
-      return "http://$ip:$port"
+      "http://$ip:$port"
     } catch (e: Exception) {
-      // Unreachable
+      null
     } finally {
-      try {
-        socket?.close()
-      } catch (e: Exception) {
-        // Ignored
-      }
+      try { socket?.close() } catch (e: Exception) { }
     }
-    return null
   }
 
   fun runNetworkDiscovery() {
+    val prefs = context.getSharedPreferences("vnc_prefs", Context.MODE_PRIVATE)
+    val port = (prefs.getString("default_port", "8000") ?: "8000").toIntOrNull() ?: 8000
     coroutineScope.launch {
-      isScanning = true
-      hasScanned = true
-      discoveredServers.clear()
+      vm.setScanState(true)
       val localIp = getLocalIpAddress()
-      if (localIp != null && localIp.contains(".")) {
+      val results = if (localIp != null && localIp.contains(".")) {
         val subnetPrefix = localIp.substringBeforeLast(".") + "."
-        val semaphore = Semaphore(40) // 40 concurrent scans
-        val deferreds = (1..254).map { host ->
-          val ip = "$subnetPrefix$host"
+        val semaphore = Semaphore(40)
+        (1..254).map { host ->
           async(Dispatchers.IO) {
-            semaphore.withPermit {
-              checkIpPortOpen(ip, 8000, timeout = 350)
-            }
+            semaphore.withPermit { checkIpPortOpen("$subnetPrefix$host", port, 350) }
           }
-        }
-        val results = deferreds.awaitAll().filterNotNull()
-        discoveredServers.addAll(results)
+        }.awaitAll().filterNotNull()
       } else {
-        // Emulator / local fallback checks
-        val fallbacks = listOf("10.0.2.2", "127.0.0.1")
-        val deferreds = fallbacks.map { ip ->
-          async(Dispatchers.IO) {
-            checkIpPortOpen(ip, 8000, timeout = 350)
-          }
-        }
-        val results = deferreds.awaitAll().filterNotNull()
-        discoveredServers.addAll(results)
+        listOf("10.0.2.2", "127.0.0.1").map { ip ->
+          async(Dispatchers.IO) { checkIpPortOpen(ip, port, 350) }
+        }.awaitAll().filterNotNull()
       }
-      isScanning = false
+      vm.setDiscoveredServers(results)
     }
   }
 
@@ -185,43 +136,57 @@ fun MainScreen(
   ) {
     Spacer(modifier = Modifier.height(48.dp))
 
-    // Logo mark
-    Box(
-      modifier = Modifier
-        .size(72.dp)
-        .clip(RoundedCornerShape(16.dp))
-        .background(Sky600),
-      contentAlignment = Alignment.Center
-    ) {
-      Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("VNC", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
-        Text("SC", color = Sky400, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 3.sp)
+    // Logo with settings gear in top-right corner
+    Box(modifier = Modifier.fillMaxWidth()) {
+      // Centered logo
+      Column(
+        modifier = Modifier.align(Alignment.TopCenter),
+        horizontalAlignment = Alignment.CenterHorizontally
+      ) {
+        Box(
+          modifier = Modifier
+            .size(72.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Sky600),
+          contentAlignment = Alignment.Center
+        ) {
+          Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("VNC", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp)
+            Text("SC", color = Sky400, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 3.sp)
+          }
+        }
+        Spacer(modifier = Modifier.height(18.dp))
+        Text("ScreenConnect Console", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text("Android Companion", color = Slate400, fontSize = 12.sp, letterSpacing = 1.sp)
+      }
+
+      // Settings icon — top right
+      IconButton(
+        onClick = { onItemClick(Settings) },
+        modifier = Modifier.align(Alignment.TopEnd)
+      ) {
+        Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Slate400, modifier = Modifier.size(22.dp))
       }
     }
-
-    Spacer(modifier = Modifier.height(18.dp))
-
-    Text("ScreenConnect Console", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-    Text("Android Companion", color = Slate400, fontSize = 12.sp, letterSpacing = 1.sp)
 
     Spacer(modifier = Modifier.height(30.dp))
 
     // URL Input
     OutlinedTextField(
-      value = urlInput,
-      onValueChange = { urlInput = it; urlError = false },
+      value = uiState.urlInput,
+      onValueChange = { vm.setUrl(it) },
       label = { Text("Server URL") },
       placeholder = { Text("http://192.168.1.x:8000", color = Slate700) },
       singleLine = true,
-      isError = urlError,
-      supportingText = if (urlError) {
+      isError = uiState.urlError,
+      supportingText = if (uiState.urlError) {
         { Text("Enter a valid URL starting with http:// or https://", color = MaterialTheme.colorScheme.error, fontSize = 11.sp) }
       } else null,
-      trailingIcon = if (urlInput.isNotEmpty()) {
-        { IconButton(onClick = { urlInput = "" }) { Icon(Icons.Default.Clear, contentDescription = "Clear", tint = Slate400) } }
+      trailingIcon = if (uiState.urlInput.isNotEmpty()) {
+        { IconButton(onClick = { vm.setUrl("") }) { Icon(Icons.Default.Clear, contentDescription = "Clear", tint = Slate400) } }
       } else null,
       keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go),
-      keyboardActions = KeyboardActions(onGo = { connect(urlInput) }),
+      keyboardActions = KeyboardActions(onGo = { connect(uiState.urlInput) }),
       colors = OutlinedTextFieldDefaults.colors(
         focusedTextColor = Color.White,
         unfocusedTextColor = Color.White,
@@ -240,7 +205,7 @@ fun MainScreen(
 
     // Connect button
     Button(
-      onClick = { connect(urlInput) },
+      onClick = { connect(uiState.urlInput) },
       colors = ButtonDefaults.buttonColors(containerColor = Sky600),
       modifier = Modifier.fillMaxWidth().height(52.dp),
       shape = RoundedCornerShape(10.dp),
@@ -251,7 +216,7 @@ fun MainScreen(
 
     Spacer(modifier = Modifier.height(24.dp))
 
-    // --- Subnet Auto-Discovery Section ---
+    // Subnet Auto-Discovery
     Row(
       modifier = Modifier.fillMaxWidth(),
       horizontalArrangement = Arrangement.SpaceBetween,
@@ -261,14 +226,14 @@ fun MainScreen(
         Icon(Icons.Default.Wifi, contentDescription = "Subnet Discovery", tint = Sky400, modifier = Modifier.size(16.dp))
         Text("Local Subnet Discovery", color = Slate400, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp)
       }
-      IconButton(onClick = { runNetworkDiscovery() }, enabled = !isScanning, modifier = Modifier.size(32.dp)) {
-        Icon(Icons.Default.Refresh, contentDescription = "Scan Subnet", tint = if (isScanning) Slate700 else Sky400, modifier = Modifier.size(16.dp))
+      IconButton(onClick = { runNetworkDiscovery() }, enabled = !uiState.isScanning, modifier = Modifier.size(32.dp)) {
+        Icon(Icons.Default.Refresh, contentDescription = "Scan Subnet", tint = if (uiState.isScanning) Slate700 else Sky400, modifier = Modifier.size(16.dp))
       }
     }
 
     Spacer(modifier = Modifier.height(4.dp))
 
-    if (isScanning) {
+    if (uiState.isScanning) {
       Box(
         modifier = Modifier
           .fillMaxWidth()
@@ -282,19 +247,19 @@ fun MainScreen(
           Text("Scanning local network subnet…", color = Slate300, fontSize = 11.sp)
         }
       }
-    } else if (hasScanned) {
-      if (discoveredServers.isNotEmpty()) {
+    } else if (uiState.hasScanned) {
+      if (uiState.discoveredServers.isNotEmpty()) {
         Card(
           colors = CardDefaults.cardColors(containerColor = Slate800),
           modifier = Modifier.fillMaxWidth(),
           shape = RoundedCornerShape(8.dp)
         ) {
           Column(modifier = Modifier.padding(12.dp)) {
-            discoveredServers.forEach { server ->
+            uiState.discoveredServers.forEach { server ->
               Row(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .clickable { urlInput = server }
+                  .clickable { vm.setUrl(server) }
                   .padding(vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -335,8 +300,8 @@ fun MainScreen(
 
     Spacer(modifier = Modifier.height(16.dp))
 
-    // --- Screen Share Section ---
-    val activity = context as? com.example.vnccompanion.MainActivity
+    // Screen Share Card
+    val activity = LocalContext.current as? com.example.vnccompanion.MainActivity
     val isSharingScreen by ScreenShareState.isSharing
 
     Card(
@@ -379,11 +344,11 @@ fun MainScreen(
           checked = isSharingScreen,
           onCheckedChange = { checked ->
             if (checked) {
-              val trimmed = urlInput.trim()
+              val trimmed = uiState.urlInput.trim()
               if (trimmed.isEmpty() || (!trimmed.startsWith("http://") && !trimmed.startsWith("https://"))) {
-                urlError = true
+                vm.setUrlError(true)
               } else {
-                urlError = false
+                vm.setUrlError(false)
                 activity?.requestScreenCapture(trimmed)
               }
             } else {
@@ -403,7 +368,7 @@ fun MainScreen(
     Spacer(modifier = Modifier.height(16.dp))
 
     // History section
-    if (historyList.isNotEmpty()) {
+    if (uiState.historyList.isNotEmpty()) {
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -411,10 +376,7 @@ fun MainScreen(
       ) {
         Text("Recent Connections", color = Slate400, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp)
         TextButton(
-          onClick = {
-            historyList.clear()
-            prefs.edit().remove("history_ordered").remove("history").apply()
-          },
+          onClick = { vm.clearHistory() },
           contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
         ) {
           Text("Clear All", color = Slate400, fontSize = 11.sp)
@@ -424,7 +386,7 @@ fun MainScreen(
       Spacer(modifier = Modifier.height(8.dp))
 
       LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
-        itemsIndexed(historyList, key = { _, item -> item }) { index, item ->
+        itemsIndexed(uiState.historyList, key = { _, item -> item }) { index, item ->
           Card(
             colors = CardDefaults.cardColors(containerColor = Slate800),
             modifier = Modifier
@@ -436,7 +398,7 @@ fun MainScreen(
             Row(
               modifier = Modifier
                 .fillMaxWidth()
-                .clickable { urlInput = item }
+                .clickable { vm.setUrl(item) }
                 .padding(horizontal = 16.dp, vertical = 12.dp),
               horizontalArrangement = Arrangement.SpaceBetween,
               verticalAlignment = Alignment.CenterVertically
@@ -461,10 +423,7 @@ fun MainScreen(
                   Text("Connect", color = Sky500, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 }
                 IconButton(
-                  onClick = {
-                    historyList.removeAt(index)
-                    saveHistory()
-                  },
+                  onClick = { vm.removeFromHistory(item) },
                   modifier = Modifier.size(32.dp)
                 ) {
                   Icon(Icons.Default.Delete, contentDescription = "Remove", tint = Slate400, modifier = Modifier.size(16.dp))
@@ -475,7 +434,6 @@ fun MainScreen(
         }
       }
     } else {
-      // Empty state
       Spacer(modifier = Modifier.height(8.dp))
       Box(
         modifier = Modifier
