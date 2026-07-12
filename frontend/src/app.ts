@@ -17,9 +17,11 @@ export class ScreenShareApp {
   private sessionTimerIntervalId: number | null = null;
   private sessionStartTime: number | null = null;
   private hardwareIntervalId: number | null = null;
+  private auditIntervalId: number | null = null;
   private qualityDebounceTimer: number | null = null;
   private csrfToken = '';
   private username = '';
+  private role = '';
   private remoteCursors = new Map<string, HTMLElement>();
 
   // DOM Elements
@@ -365,6 +367,7 @@ export class ScreenShareApp {
     });
 
     document.getElementById('btn-hardware-refresh')?.addEventListener('click', () => this.fetchSystemInfo());
+    document.getElementById('btn-audit-refresh')?.addEventListener('click', () => this.fetchAuditLogs());
 
     // Restore user-customized options and check for active session
     this.restoreState();
@@ -467,6 +470,7 @@ export class ScreenShareApp {
         this.clipboard.setCsrfToken(this.csrfToken);
 
         // Control interactive input availability based on role
+        this.role = role;
         if (role === 'operator') {
           this.input.enable(this.token, this.monitorId, this.csrfToken);
           document.getElementById('btn-clipboard-send')?.removeAttribute('disabled');
@@ -480,6 +484,12 @@ export class ScreenShareApp {
         this.startSessionTimer();
         document.title = `Connected — ScreenConnect Console`;
         this.showToast(`✓ Session started as ${role}`, 'info');
+
+        if (this.role === 'administrator') {
+          this.startAuditLogsPolling();
+        } else {
+          this.stopAuditLogsPolling();
+        }
         
         // Show audio toggle controls
         this.btnAudioToggle.classList.remove('hidden');
@@ -501,8 +511,10 @@ export class ScreenShareApp {
   private handleLogout() {
     this.stopTokenRefresh();
     this.stopSessionTimer();
+    this.stopAuditLogsPolling();
     this.csrfToken = '';
     this.username = '';
+    this.role = '';
 
     // Remove remote cursors overlays
     this.remoteCursors.forEach(el => el.remove());
@@ -797,6 +809,7 @@ export class ScreenShareApp {
           this.clipboard.setCsrfToken(this.csrfToken);
 
           const role = data.role || 'operator';
+          this.role = role;
           if (role === 'operator') {
             this.input.enable(this.token, this.monitorId, this.csrfToken);
             document.getElementById('btn-clipboard-send')?.removeAttribute('disabled');
@@ -808,6 +821,12 @@ export class ScreenShareApp {
           this.startTokenRefresh();
           this.startSessionTimer();
           document.title = `Connected — ScreenConnect Console`;
+
+          if (this.role === 'administrator') {
+            this.startAuditLogsPolling();
+          } else {
+            this.stopAuditLogsPolling();
+          }
 
           // Restore audio mute state on session recovery
           const savedAudio = localStorage.getItem('vnc_audio_muted');
@@ -899,4 +918,84 @@ export class ScreenShareApp {
       this.hardwareIntervalId = null;
     }
   }
+
+  private async fetchAuditLogs() {
+    if (!this.token || this.role !== 'administrator') return;
+    try {
+      const res = await fetch('/api/audit/logs', {
+        headers: {
+          'X-CSRF-Token': this.csrfToken || ''
+        },
+        credentials: 'same-origin'
+      });
+      if (res.status === 401 || res.status === 403) {
+        this.stopAuditLogsPolling();
+        return;
+      }
+      const data = await res.json();
+      const listEl = document.getElementById('audit-log-list');
+      if (!listEl) return;
+      
+      if (!Array.isArray(data) || data.length === 0) {
+        listEl.innerHTML = '<div class="text-slate-600 text-center py-2">No security events loaded.</div>';
+        return;
+      }
+
+      listEl.innerHTML = data.map((event: any) => {
+        const date = new Date(event.timestamp);
+        const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        
+        let typeBadge = '';
+        let rowColor = 'text-slate-400';
+        
+        if (event.event_type.includes('fail') || event.event_type.includes('block') || event.event_type.includes('violation')) {
+          typeBadge = `<span class="text-[8px] bg-rose-950/85 text-rose-400 border border-rose-900 px-1 py-0.2 rounded font-bold uppercase">SEC</span>`;
+          rowColor = 'text-rose-350';
+        } else if (event.event_type.includes('success') || event.event_type.includes('start')) {
+          typeBadge = `<span class="text-[8px] bg-emerald-950/80 text-emerald-400 border border-emerald-900 px-1 py-0.2 rounded font-bold uppercase">OK</span>`;
+          rowColor = 'text-emerald-350';
+        } else {
+          typeBadge = `<span class="text-[8px] bg-slate-900 text-slate-400 border border-slate-700 px-1 py-0.2 rounded font-bold uppercase">SYS</span>`;
+        }
+
+        let detailsStr = '';
+        if (event.details) {
+          detailsStr = Object.entries(event.details)
+            .map(([k, v]) => `<span class="text-slate-500">${k}:</span>${v}`)
+            .join(' ');
+        }
+
+        return `
+          <div class="flex flex-col space-y-0.5 border-b border-slate-900/60 pb-1.5 last:border-0 ${rowColor}">
+            <div class="flex items-center justify-between">
+              <span class="text-[8px] text-slate-500 font-medium">${timeStr}</span>
+              ${typeBadge}
+            </div>
+            <div class="text-[9px] font-semibold">${event.event_type}</div>
+            <div class="text-[8px] font-mono text-slate-350 truncate leading-relaxed" title="${detailsStr.replace(/"/g, '&quot;')}">${detailsStr}</div>
+          </div>
+        `;
+      }).join('');
+    } catch (err) {
+      console.debug('[VNC App] Failed to fetch audit logs:', err);
+    }
+  }
+
+  private startAuditLogsPolling() {
+    this.stopAuditLogsPolling();
+    const cardEl = document.getElementById('admin-audit-card');
+    if (cardEl) cardEl.classList.remove('hidden');
+    this.fetchAuditLogs();
+    this.auditIntervalId = window.setInterval(() => this.fetchAuditLogs(), 8000);
+  }
+
+  private stopAuditLogsPolling() {
+    if (this.auditIntervalId) {
+      clearInterval(this.auditIntervalId);
+      this.auditIntervalId = null;
+    }
+    const cardEl = document.getElementById('admin-audit-card');
+    if (cardEl) cardEl.classList.add('hidden');
+  }
 }
+

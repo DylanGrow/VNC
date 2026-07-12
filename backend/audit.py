@@ -59,3 +59,42 @@ class AuditLogger:
         with self._lock:
             with open(self.log_path, "a") as f:
                 f.write(f"{encoded_nonce}:{encoded_cipher}\n")
+
+    async def get_decrypted_events(self, limit: int = 50) -> list:
+        """Reads, decrypts, and returns the latest audit log events."""
+        if not os.path.exists(self.log_path):
+            return []
+        
+        def _read_and_decrypt():
+            events = []
+            with self._lock:
+                try:
+                    with open(self.log_path, "r") as f:
+                        lines = f.readlines()
+                except Exception as e:
+                    logger.error(f"Failed to read audit log file: {e}")
+                    return []
+
+            for line in reversed(lines):
+                line = line.strip()
+                if not line or ":" not in line:
+                    continue
+                try:
+                    parts = line.split(":", 1)
+                    if len(parts) != 2:
+                        continue
+                    encoded_nonce, encoded_cipher = parts
+                    nonce = base64.b64decode(encoded_nonce)
+                    ciphertext = base64.b64decode(encoded_cipher)
+                    
+                    data = self.aesgcm.decrypt(nonce, ciphertext, None)
+                    event = json.loads(data.decode("utf-8"))
+                    events.append(event)
+                    if len(events) >= limit:
+                        break
+                except Exception:
+                    # Skip decryption errors (e.g. key mismatch after service restarts)
+                    continue
+            return events
+
+        return await asyncio.to_thread(_read_and_decrypt)

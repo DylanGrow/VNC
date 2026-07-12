@@ -976,6 +976,17 @@ async def get_system_info(current_user: TokenData = Depends(verify_token)):
         "storage": storage_info
     }
 
+# ------------------ Encrypted Audit Log API ------------------
+@app.get("/api/audit/logs")
+async def get_audit_logs(current_user: TokenData = Depends(verify_token)):
+    """Returns decrypted audit logs, strictly restricted to server administrators."""
+    if current_user.role != "administrator":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only administrators are authorized to view system audit logs."
+        )
+    return await audit_logger.get_decrypted_events(limit=55)
+
 # ------------------ Health & Telemetry ------------------
 @app.get("/metrics")
 async def get_metrics(current_user: TokenData = Depends(verify_token)):

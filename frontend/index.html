@@ -326,8 +326,22 @@
               </div>
               <div class="w-full h-1.5 bg-slate-950 rounded overflow-hidden">
                 <div id="bar-hw-disk" class="w-0 h-full bg-brand-500 rounded transition-all duration-500"></div>
-              </div>
             </div>
+          </div>
+        </div>
+
+        <!-- Admin Audit Log Card -->
+        <div id="admin-audit-card" class="p-3 bg-slate-800/40 border border-slate-800 rounded space-y-2 hidden">
+          <div class="flex items-center justify-between border-b border-slate-700/40 pb-1.5">
+            <h4 class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Security Audit Logs</h4>
+            <button id="btn-audit-refresh" aria-label="Refresh Audit Logs" class="text-slate-500 hover:text-slate-300 transition-colors">
+              <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H18.5" />
+              </svg>
+            </button>
+          </div>
+          <div id="audit-log-list" class="max-h-48 overflow-y-auto space-y-1.5 pr-0.5 text-[9px] font-mono">
+            <div class="text-slate-600 text-center py-2">No security events loaded.</div>
           </div>
         </div>
       </div>
