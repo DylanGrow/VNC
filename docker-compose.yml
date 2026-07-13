@@ -6,13 +6,19 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     container_name: vnc_backend
+    env_file:
+      - backend/.env
     environment:
-      - SECURE_PASSWORD=your_secure_password
-      - SECRET_KEY=change_this_to_a_very_secure_random_string_at_least_32_bytes_long
-      - ACCESS_TOKEN_EXPIRE_MINUTES=15
-    ports:
-      - "8000:8000"
+      - ENV=production
+    networks:
+      - internal
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
   frontend:
     build:
@@ -21,6 +27,19 @@ services:
     container_name: vnc_frontend
     ports:
       - "80:80"
+      - "443:443"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    networks:
+      - internal
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  internal:
+    driver: bridge

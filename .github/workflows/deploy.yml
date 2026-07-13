@@ -1,4 +1,4 @@
-name: Build & Verify VNC System
+name: Build, Lint & Verify VNC System
 
 on:
   push:
@@ -11,10 +11,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Codebase
-        uses: actions/checkout@v3
+        # M6 FIX: Pin action to SHA for supply chain security
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2f  # v5.3.0
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -24,30 +25,78 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r backend/requirements.txt
+          pip install ruff pip-audit
 
       - name: Syntax Compilation Check
         run: |
           python -m py_compile backend/*.py
 
+      # M4 FIX: Run linter
+      - name: Lint (ruff)
+        run: |
+          ruff check backend/ --select E,W,F --ignore E501
+
+      # M5 FIX: Security vulnerability scan
+      - name: Security Scan (pip-audit)
+        run: |
+          pip-audit -r backend/requirements.txt --skip-editable
+
   verify-frontend:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Codebase
-        uses: actions/checkout@v3
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
       - name: Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af  # v4.1.0
         with:
-          node-version: '18'
+          node-version: '20'
           cache: 'npm'
           cache-dependency-path: 'frontend/package.json'
 
       - name: Install Node Dependencies
         run: |
           cd frontend
-          npm install
+          npm ci
+
+      # M5 FIX: Node security audit
+      - name: Security Scan (npm audit)
+        run: |
+          cd frontend
+          npm audit --audit-level=high
 
       - name: Type Check & Production Compile
         run: |
           cd frontend
           npm run build
+
+  # L3 FIX: Add Android build step for CI verification
+  verify-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Codebase
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@3a4f6e1af504cf6a31855f1e21d1f6907572e5d4  # v4.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Cache Gradle packages
+        uses: actions/cache@6849a6489940f00c2f30c0fb92c6274307ccb58a  # v4.1.2
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Grant Gradle Wrapper Execute Permission
+        run: chmod +x android/gradlew
+
+      - name: Build Android Debug APK
+        run: |
+          cd android
+          ./gradlew assembleDebug --no-daemon

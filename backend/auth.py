@@ -80,8 +80,20 @@ def clear_failed_attempts(ip: str):
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
-    SECRET_KEY = secrets.token_hex(32)
-    logger.warning("SECRET_KEY environment variable not set. Generated a secure transient signing key.")
+    _env_mode = os.getenv("ENV", "development").lower()
+    if _env_mode == "production":
+        import sys
+        logger.critical(
+            "SECRET_KEY environment variable is not set. "
+            "All JWT tokens will be insecure. Refusing to start in production mode."
+        )
+        sys.exit(1)
+    else:
+        SECRET_KEY = secrets.token_hex(32)
+        logger.warning(
+            "SECRET_KEY not set — generated a transient signing key. "
+            "All tokens will be invalidated on restart. Set SECRET_KEY in production."
+        )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
 

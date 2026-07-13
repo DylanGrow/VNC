@@ -37,9 +37,26 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Antigravity VNC Server", version="1.0.0")
 
 # Load environment configuration variables
-SECURE_PASSWORD = os.getenv("SECURE_PASSWORD", "your_secure_password")
+SECURE_PASSWORD = os.getenv("SECURE_PASSWORD", "")
+if not SECURE_PASSWORD:
+    _env_mode = os.getenv("ENV", "development").lower()
+    if _env_mode == "production":
+        import sys
+        logger.critical("SECURE_PASSWORD environment variable is not set. Refusing to start in production mode.")
+        sys.exit(1)
+    else:
+        SECURE_PASSWORD = "dev_password_change_me"
+        logger.warning("SECURE_PASSWORD not set. Using insecure default — do NOT use in production.")
+
+MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "100"))
 MAX_PER_IP = int(os.getenv("MAX_CONNECTIONS_PER_IP", "3"))
 MAX_GLOBAL = int(os.getenv("MAX_GLOBAL_CONNECTIONS", "10"))
+
+# Allowed CORS origins from env (comma-separated), fallback to localhost only
+_allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")
+ALLOWED_ORIGIN_LIST: list[str] = [
+    o.strip() for o in _allowed_origins_env.split(",") if o.strip()
+] if _allowed_origins_env else []
 
 # Initialize system resources
 connection_manager = ConnectionManager(max_per_ip=MAX_PER_IP, max_global=MAX_GLOBAL)
@@ -249,9 +266,9 @@ async def add_security_headers(request: Request, call_next):
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        "script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline'; "
-        "font-src 'self' data:; "
+        "font-src 'self' data: https://fonts.gstatic.com; "
         "img-src 'self' data:; "
         "connect-src 'self' ws: wss:; "
         "frame-ancestors 'none'; "
@@ -260,13 +277,19 @@ async def add_security_headers(request: Request, call_next):
     )
     return response
 
-# CORS Policy - Restrict origin in production
+# CORS Policy — configurable via ALLOWED_ORIGINS env var
+_cors_origins = ALLOWED_ORIGIN_LIST if ALLOWED_ORIGIN_LIST else []
+_cors_regex = (
+    None if ALLOWED_ORIGIN_LIST
+    else r"https?://(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?"
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex="https?://(localhost|127\\.0\\.0\\.1|0\\.0\\.0\\.0)(:\\d+)?",
+    allow_origins=_cors_origins,
+    allow_origin_regex=_cors_regex,
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "X-CSRF-Token", "Authorization"],
 )
 
 class ApiPathRewriteMiddleware:
@@ -507,14 +530,32 @@ async def client_reader(websocket: WebSocket, session_config: dict):
 
 @app.websocket("/ws/publish-screen")
 async def websocket_publish_screen(websocket: WebSocket):
-    """WebSocket endpoint where Android companion app streams its screen frames."""
+    """WebSocket endpoint where Android companion app streams its screen frames.
+    Requires a valid session token passed as a query parameter.
+    """
     global ANDROID_SCREEN_STREAM
     client_ip = websocket.client[0] if websocket.client else "unknown"
+
+    # Require authentication before accepting the connection
+    token = websocket.cookies.get("access_token") or websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Missing auth token")
+        return
+    try:
+        current_user = verify_token_string(token)
+    except HTTPException:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid or expired token")
+        return
+
+    # Only operators and administrators may publish screens
+    if current_user.role not in ("operator", "administrator"):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Insufficient permissions")
+        return
+
     try:
         await websocket.accept()
-        logger.info(f"Android screen publisher connected from {client_ip}")
+        logger.info(f"Android screen publisher connected from {client_ip} as {current_user.sub}")
         while True:
-            # Receive binary image frames from the Android publisher
             data = await websocket.receive_bytes()
             if data:
                 async with ANDROID_STREAM_LOCK:
@@ -809,6 +850,13 @@ async def get_clipboard(current_user: TokenData = Depends(verify_token)):
     text = await asyncio.to_thread(clipboard_manager.get_text)
     return {"data": text}
 
+# Permitted commands for the remote terminal (whitelist approach to prevent RCE abuse)
+_TERMINAL_ALLOWED_PREFIXES = (
+    "dir", "ls", "pwd", "whoami", "hostname", "ipconfig", "ifconfig",
+    "tasklist", "ps", "df", "free", "uptime", "date", "echo",
+    "ping", "netstat", "cat", "type", "ver", "uname",
+)
+
 # ------------------ Remote Command Runner API ------------------
 @app.post("/terminal/execute")
 async def execute_terminal_command(
@@ -816,16 +864,31 @@ async def execute_terminal_command(
     current_user: TokenData = Depends(verify_token),
     request: Request = None
 ):
-    """Executes a terminal shell command on the host and returns output."""
-    if current_user.role not in ["operator", "administrator"]:
+    """Executes a whitelisted terminal command on the host. Restricted to administrators."""
+    # C4 FIX: Restrict to administrator only — operators cannot run shell commands
+    if current_user.role != "administrator":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions to run background commands."
+            detail="Only administrators are permitted to execute remote commands."
         )
 
     command = data.get("command", "").strip()
     if not command:
         raise HTTPException(status_code=400, detail="Command content cannot be empty.")
+
+    # C5 FIX: Whitelist check — reject commands not starting with a permitted prefix
+    first_token = command.split()[0].lower().lstrip("./")
+    if first_token not in _TERMINAL_ALLOWED_PREFIXES:
+        client_ip = request.client.host if request and request.client else "unknown"
+        await audit_logger.log_event("terminal_blocked", {
+            "username": current_user.sub,
+            "ip": client_ip,
+            "command": command
+        })
+        raise HTTPException(
+            status_code=400,
+            detail=f"Command '{first_token}' is not in the permitted command list."
+        )
 
     client_ip = request.client.host if request and request.client else "unknown"
     await audit_logger.log_event("remote_shell_execute", {
@@ -835,15 +898,18 @@ async def execute_terminal_command(
     })
 
     try:
-        # Run command securely in async subprocess shell
-        proc = await asyncio.create_subprocess_shell(
-            command,
+        # C5 FIX: Use exec (not shell) to prevent shell injection
+        args = command.split()
+        proc = await asyncio.create_subprocess_exec(
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await proc.communicate()
-        
-        # Decode output bytes (using replace to ignore codec errors safely)
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            return {"output": "Command timed out after 30 seconds.", "exit_code": -1}
         output_str = stdout.decode("utf-8", errors="replace") + stderr.decode("utf-8", errors="replace")
         return {
             "output": output_str,
@@ -874,7 +940,9 @@ async def upload_file_to_host(
     current_user: TokenData = Depends(verify_token),
     request: Request = None
 ):
-    """Receives binary stream and saves it to the host Downloads directory."""
+    """Receives binary stream and saves it to the host Downloads directory.
+    Enforces file size limits and sanitizes filenames.
+    """
     if current_user.role not in ["operator", "administrator"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -882,9 +950,14 @@ async def upload_file_to_host(
         )
 
     from pathlib import Path
-    filename = Path(file.filename).name
-    if not filename:
-        raise HTTPException(status_code=400, detail="Invalid filename.")
+    filename = Path(file.filename).name if file.filename else ""
+    if not filename or filename.startswith("."):
+        raise HTTPException(status_code=400, detail="Invalid or unsafe filename.")
+
+    # Sanitize: allow only safe characters in filenames
+    import re
+    if not re.match(r'^[\w\-. ()]+$', filename):
+        raise HTTPException(status_code=400, detail="Filename contains disallowed characters.")
 
     dest_dir = get_downloads_dir()
     dest_path = dest_dir / filename
@@ -897,22 +970,34 @@ async def upload_file_to_host(
         "destination": str(dest_path)
     })
 
+    max_bytes = MAX_UPLOAD_SIZE_MB * 1024 * 1024
     try:
-        # Stream the file to disk in chunks to optimize memory utilization
+        # H1 FIX: Stream file to disk with size enforcement
+        bytes_written = 0
         with open(dest_path, "wb") as f:
             while True:
                 chunk = await file.read(1024 * 1024)  # 1MB chunks
                 if not chunk:
                     break
+                bytes_written += len(chunk)
+                if bytes_written > max_bytes:
+                    f.close()
+                    dest_path.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File exceeds maximum allowed size of {MAX_UPLOAD_SIZE_MB}MB."
+                    )
                 f.write(chunk)
-        
+
         await audit_logger.log_event("file_upload_success", {
             "username": current_user.sub,
             "ip": client_ip,
             "filename": filename,
-            "size_bytes": dest_path.stat().st_size
+            "size_bytes": bytes_written
         })
         return {"status": "success", "filename": filename, "path": str(dest_path)}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"File upload error for '{filename}': {e}")
         if dest_path.exists():
@@ -977,7 +1062,8 @@ async def get_system_info(current_user: TokenData = Depends(verify_token)):
     }
 
 # ------------------ Encrypted Audit Log API ------------------
-@app.get("/api/audit/logs")
+# C6 FIX: Route registered without /api/ prefix so ApiPathRewriteMiddleware routes correctly
+@app.get("/audit/logs")
 async def get_audit_logs(current_user: TokenData = Depends(verify_token)):
     """Returns decrypted audit logs, strictly restricted to server administrators."""
     if current_user.role != "administrator":

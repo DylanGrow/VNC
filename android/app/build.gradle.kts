@@ -17,8 +17,12 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+        debug {
+            isMinifyEnabled = false
         }
     }
     compileOptions {
@@ -86,6 +90,6 @@ dependencies {
   // OkHttp for WebSockets
   implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-  // Biometric auth (fingerprint / face unlock)
-  implementation("androidx.biometric:biometric:1.2.0-alpha05")
+  // Biometric auth (fingerprint / face unlock) - stable release
+  implementation("androidx.biometric:biometric:1.1.0")
 }
