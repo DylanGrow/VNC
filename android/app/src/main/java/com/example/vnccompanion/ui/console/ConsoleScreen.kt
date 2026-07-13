@@ -130,24 +130,16 @@ fun ConsoleScreen(
         )
 
         // Touchpad overlay sits above WebView when active
-        AnimatedVisibility(
-          visible = touchpadMode,
-          enter = fadeIn(),
-          exit = fadeOut(),
-          modifier = Modifier.fillMaxSize()
-        ) {
+        if (touchpadMode) {
           TouchpadOverlay(webView = webViewRef, modifier = Modifier.fillMaxSize())
         }
 
         // Touchpad mode indicator badge
-        AnimatedVisibility(
-          visible = touchpadMode,
-          enter = fadeIn(),
-          exit = fadeOut(),
-          modifier = Modifier.align(Alignment.TopEnd).padding(10.dp)
-        ) {
+        if (touchpadMode) {
           Row(
             modifier = Modifier
+              .align(Alignment.TopEnd)
+              .padding(10.dp)
               .background(Sky600.copy(alpha = 0.90f), RoundedCornerShape(20.dp))
               .padding(horizontal = 10.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically,
