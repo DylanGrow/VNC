@@ -147,7 +147,7 @@ class InputValidator:
                 keys = data.get("keys", [])
                 if not keys:
                     raise ValueError("Missing keys list for combo")
-                
+
                 keys_lower = []
                 # Validate each key in the combo against the whitelist
                 for key in keys:

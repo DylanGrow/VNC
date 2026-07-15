@@ -19,7 +19,7 @@ class SystemTrayApp:
         self.available = pystray_available
         self.icon = None
         self.input_locked = False
-        
+
         if sys.platform == "darwin":
             logger.warning("System tray applet is disabled on macOS because pystray requires the main thread GUI loop.")
             self.available = False

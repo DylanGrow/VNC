@@ -7,8 +7,8 @@ import threading
 logger = logging.getLogger(__name__)
 
 try:
-    import importlib.util
-    if importlib.util.find_spec("aiortc") is None or importlib.util.find_spec("av") is None:
+    from importlib.util import find_spec
+    if find_spec("aiortc") is None or find_spec("av") is None:
         raise ImportError()
     from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, AudioStreamTrack
     from av import VideoFrame, AudioFrame

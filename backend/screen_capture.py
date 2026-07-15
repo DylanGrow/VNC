@@ -17,7 +17,7 @@ class ScreenCapture:
         self.lock = threading.Lock()
         self.sct = None
         self.headless = False
-        
+
         # Test initial connection
         self._get_sct()
 
@@ -274,7 +274,7 @@ class ScreenCapture:
         w, h = resolution if resolution else (1280, 720)
         img = Image.new("RGB", (w, h), color=(15, 23, 42))  # Slate-900 theme color
         draw = ImageDraw.Draw(img)
-        
+
         t = time.time()
         cx = int((w / 2) + (w / 4) * math.sin(t * 2))
         cy = int((h / 2) + (h / 5) * math.cos(t * 3))

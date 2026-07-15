@@ -81,7 +81,7 @@ def disconnect_all_operators():
     if EVENT_LOOP is None:
         logger.warning("System Tray: Main event loop is not registered yet.")
         return
-        
+
     def close_all():
         for conn_id, ws in list(ACTIVE_WEBSOCKETS.items()):
             try:
@@ -90,7 +90,7 @@ def disconnect_all_operators():
                 )
             except Exception as e:
                 logger.debug(f"Failed to force close socket: {e}")
-                
+
     EVENT_LOOP.call_soon_threadsafe(close_all)
 
 def set_remote_input_lock(locked: bool):
@@ -110,7 +110,7 @@ async def lifespan(app: FastAPI):
 
     def handle_signal(sig, frame):
         logger.info(f"Signal {sig} received. Commencing pre-exit graceful cleanup...")
-        
+
         # 1. Stop active WebRTC connections
         try:
             webrtc_manager.cleanup()
@@ -122,7 +122,7 @@ async def lifespan(app: FastAPI):
             screen_capture.close()
         except Exception as e:
             logger.debug(f"Screen capture close on signal failed: {e}")
-            
+
         # 2. Release modifier keys
         try:
             import pyautogui
@@ -130,7 +130,7 @@ async def lifespan(app: FastAPI):
                 pyautogui.keyUp(key)
         except Exception as e:
             logger.debug(f"pyautogui keyup on signal failed: {e}")
-            
+
         # 3. Stop system tray
         global SYSTEM_TRAY
         if SYSTEM_TRAY and SYSTEM_TRAY.icon:
@@ -138,10 +138,10 @@ async def lifespan(app: FastAPI):
                 SYSTEM_TRAY.icon.stop()
             except Exception:
                 pass
-                
+
         # 4. Disconnect all operator connections
         disconnect_all_operators()
-        
+
         # Forward to original handler to allow uvicorn's server loop to finalize
         if sig == signal.SIGINT and callable(original_sigint):
             original_sigint(sig, frame)
@@ -163,7 +163,7 @@ async def lifespan(app: FastAPI):
         if EVENT_LOOP is None:
             import sys
             sys.exit(0)
-            
+
         def stop_loop():
             # 1. Stop active WebRTC connections
             try:
@@ -176,7 +176,7 @@ async def lifespan(app: FastAPI):
                 screen_capture.close()
             except Exception as e:
                 logger.debug(f"Screen capture close failed on exit: {e}")
-                
+
             # 2. Release modifier keys
             try:
                 import pyautogui
@@ -184,13 +184,13 @@ async def lifespan(app: FastAPI):
                     pyautogui.keyUp(key)
             except Exception as e:
                 logger.debug(f"pyautogui keyup failed on exit: {e}")
-                
+
             # 3. Disconnect all operator connections
             disconnect_all_operators()
-            
+
             # 4. Stop uvicorn event loop
             EVENT_LOOP.stop()
-            
+
         EVENT_LOOP.call_soon_threadsafe(stop_loop)
 
     SYSTEM_TRAY = SystemTrayApp(
@@ -317,14 +317,14 @@ async def login(credentials: dict, request: Request):
     password = credentials.get("password")
     role = credentials.get("role", "operator")
     client_ip = request.client.host if request.client else "unknown"
-    
+
     if is_ip_banned(client_ip):
         await audit_logger.log_event("login_blocked_banned_ip", {"username": username, "ip": client_ip})
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Too many authentication failures. Your IP is banned for 30 minutes."
         )
-    
+
     if username and password == SECURE_PASSWORD:
         csrf_token = secrets.token_hex(16)
         token = issue_token(username, role=role, csrf_token=csrf_token)
@@ -346,11 +346,11 @@ async def login(credentials: dict, request: Request):
         clear_failed_attempts(client_ip)
         await audit_logger.log_event("login_success", {"username": username, "ip": client_ip, "role": role})
         return response
-        
+
     track_failed_attempt(client_ip)
     await audit_logger.log_event("login_failed", {"username": username, "ip": client_ip})
     raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED, 
+        status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid credentials supplied"
     )
 
@@ -421,7 +421,7 @@ async def client_reader(websocket: WebSocket, session_config: dict):
                 if not isinstance(msg, dict):
                     logger.warning(f"Socket reader: Received non-dict packet from connection {conn_id}")
                     continue
-                
+
                 msg_type = msg.get("type")
                 if msg_type == "quality_adjust":
                     try:
@@ -429,13 +429,13 @@ async def client_reader(websocket: WebSocket, session_config: dict):
                         session_config["quality"] = max(1, min(100, quality))
                     except (ValueError, TypeError):
                         pass
-                    
+
                     try:
                         scale = float(msg.get("scale", 1.0))
                         session_config["resolution_scale"] = max(0.1, min(2.0, scale))
                     except (ValueError, TypeError):
                         pass
-                        
+
                     if "rtt" in msg:
                         try:
                             session_config["rtt"] = float(msg["rtt"])
@@ -594,7 +594,7 @@ async def websocket_screen(websocket: WebSocket, monitor_id: int = 1):
     if not token:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Missing token credential")
         return
-        
+
     try:
         current_user = verify_token_string(token)
     except HTTPException:
@@ -631,7 +631,7 @@ async def websocket_screen(websocket: WebSocket, monitor_id: int = 1):
         reader_task = asyncio.create_task(client_reader(websocket, session_config))
         # Launch concurrent audio capture task
         audio_task = asyncio.create_task(audio_sender_task(websocket, conn_id))
-        
+
         frame_sequence = 0
         idle_frames = 0
         sleep_delay = 0.033
@@ -677,7 +677,7 @@ async def websocket_screen(websocket: WebSocket, monitor_id: int = 1):
                 frame_data, has_changed, tx, ty, tw, th, is_delta = screen_capture.capture(
                     monitor_id, quality=quality, resolution=(target_w, target_h)
                 )
-            
+
             if has_changed or (time.time() - LAST_INPUT_TIME < 1.5):
                 idle_frames = 0
                 sleep_delay = base_delay
@@ -685,7 +685,7 @@ async def websocket_screen(websocket: WebSocket, monitor_id: int = 1):
                 idle_frames += 1
                 if idle_frames > 150:
                     sleep_delay = 0.200 # Idle frame decelerator: drop to 5 FPS
- 
+
             # Send frame if updated, or force update once every 60 frames as keep-alive
             if frame_data and (has_changed or frame_sequence % 60 == 0):
                 if not has_changed and frame_sequence % 60 == 0 and monitor_id != 99:
@@ -770,10 +770,10 @@ async def handle_input(data: dict, current_user: TokenData = Depends(verify_toke
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Interactive control is disabled for Viewer role"
         )
-        
+
     global LAST_INPUT_TIME
     LAST_INPUT_TIME = time.time()
-    
+
     event_type = data.get("type")
     if event_type in ["mouse_move", "click", "double_click", "mouse_down", "mouse_up"]:
         presence_payload = {
@@ -815,7 +815,7 @@ async def handle_input(data: dict, current_user: TokenData = Depends(verify_toke
             monitors = screen_capture.get_monitors()
             monitor = next((m for m in monitors if m["id"] == monitor_id), monitors[0])
             w, h = monitor["width"], monitor["height"]
-        
+
         result = await asyncio.to_thread(input_validator.validate_and_execute, data, w, h)
         metrics_collector.log_input(data.get("type", "unknown"))
         return result
@@ -1025,17 +1025,17 @@ async def get_system_info(current_user: TokenData = Depends(verify_token)):
     """Returns host machine Operating System, CPU model, Memory load, and Storage metrics."""
     import platform
     import psutil
-    
+
     os_name = f"{platform.system()} {platform.release()}"
     cpu_name = get_clean_cpu_name()
-    
+
     mem = psutil.virtual_memory()
     memory_info = {
         "used_gb": mem.used / (1024 ** 3),
         "total_gb": mem.total / (1024 ** 3),
         "percent": mem.percent
     }
-    
+
     try:
         path = "C:\\" if platform.system() == "Windows" else "/"
         disk = psutil.disk_usage(path)
@@ -1116,11 +1116,11 @@ async def serve_static_or_spa(catchall: str):
     file_path = os.path.join(dist_path, catchall)
     if os.path.isfile(file_path):
         return FileResponse(file_path)
-        
+
     # If the path looks like a backend API or websocket endpoint, return 404
     if any(catchall.startswith(prefix) for prefix in ["auth", "monitors", "input", "clipboard", "metrics", "health", "ws"]):
         raise HTTPException(status_code=404, detail="Not Found")
-        
+
     # Fallback to SPA routing index.html
     index_file = os.path.join(dist_path, "index.html")
     if os.path.isfile(index_file):
@@ -1134,11 +1134,11 @@ def generate_self_signed_certs() -> tuple[str, str]:
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
     import datetime
-    
+
     logger.info("Auto SSL: Generating temporary self-signed certificate...")
-    
+
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    
+
     subject = issuer = x509.Name([
         x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
         x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "California"),
@@ -1146,7 +1146,7 @@ def generate_self_signed_certs() -> tuple[str, str]:
         x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Antigravity VNC"),
         x509.NameAttribute(NameOID.COMMON_NAME, "localhost"),
     ])
-    
+
     cert = x509.CertificateBuilder().subject_name(
         subject
     ).issuer_name(
@@ -1161,40 +1161,40 @@ def generate_self_signed_certs() -> tuple[str, str]:
         datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365)
     ).add_extension(
         x509.SubjectAlternativeName([
-            x509.DNSName("localhost"), 
+            x509.DNSName("localhost"),
             x509.IPAddress(ipaddress.IPv4Address("127.0.0.1"))
         ]),
         critical=False,
     ).sign(key, hashes.SHA256())
-    
+
     certs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "certs")
     os.makedirs(certs_dir, exist_ok=True)
     key_path = os.path.join(certs_dir, "key.pem")
     cert_path = os.path.join(certs_dir, "cert.pem")
-    
+
     with open(key_path, "wb") as f:
         f.write(key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.TraditionalOpenSSL,
             encryption_algorithm=serialization.NoEncryption()
         ))
-        
+
     with open(cert_path, "wb") as f:
         f.write(cert.public_bytes(serialization.Encoding.PEM))
-        
+
     logger.info(f"Auto SSL: Certificate generated successfully at {cert_path}")
     return key_path, cert_path
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     ssl_key_file = os.getenv("SSL_KEY_FILE")
     ssl_cert_file = os.getenv("SSL_CERT_FILE")
-    
+
     # Auto SSL logic
     if os.getenv("AUTO_SSL", "false").lower() == "true" and (not ssl_key_file or not ssl_cert_file):
         ssl_key_file, ssl_cert_file = generate_self_signed_certs()
-        
+
     uvicorn.run(
         "main:app",
         host=os.getenv("HOST", "0.0.0.0"),
