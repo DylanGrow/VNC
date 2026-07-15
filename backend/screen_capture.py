@@ -20,7 +20,7 @@ class ScreenCapture:
         
         # Test initial connection
         self._get_sct()
-            
+
         self.prev_hashes: Dict[int, str] = {}
         # Stores historical hashes of quadrants per monitor {monitor_id: {quad_index: hash}}
         self.quadrant_hashes: Dict[int, Dict[int, str]] = {}
@@ -55,7 +55,7 @@ class ScreenCapture:
                 "top": 0,
                 "is_primary": True
             }]
-            
+
         try:
             with self.lock:
                 monitors_list = sct.monitors
@@ -117,7 +117,7 @@ class ScreenCapture:
             logger.debug(f"Failed to adjust host display resolution: {e}")
             return False
 
-    def capture(self, monitor_id: int = 1, quality: int = 75, 
+    def capture(self, monitor_id: int = 1, quality: int = 75,
                 resolution: Optional[Tuple[int, int]] = (1280, 720),
                 force_full: bool = False) -> Tuple[Optional[str], bool, int, int, int, int, bool]:
         """
@@ -143,10 +143,9 @@ class ScreenCapture:
                 # Ensure monitor index is valid
                 if monitor_id < 1 or monitor_id >= len(monitors):
                     monitor_id = 1
-                
+
                 monitor = monitors[monitor_id]
                 screenshot = sct.grab(monitor)
-            
             raw_img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
             img = None
             try:
@@ -194,11 +193,11 @@ class ScreenCapture:
                 if force_full or len(changed_quads) > 2 or not self.quadrant_hashes[monitor_id]:
                     # Update all quadrant hashes
                     self.quadrant_hashes[monitor_id] = current_quad_hashes
-                    
+
                     # Close unused quadrant images immediately
                     for _, _, qi in changed_quads:
                         qi.close()
-                    
+
                     with io.BytesIO() as buffer:
                         img.save(buffer, format="JPEG", quality=quality, optimize=True)
                         jpeg_bytes = buffer.getvalue()
@@ -217,7 +216,7 @@ class ScreenCapture:
                     q_img.save(buffer, format="JPEG", quality=quality, optimize=True)
                     jpeg_bytes = buffer.getvalue()
                 q_img.close()
-                
+
                 base64_str = base64.b64encode(jpeg_bytes).decode("utf-8")
 
                 tx, ty = box[0], box[1]
@@ -279,7 +278,7 @@ class ScreenCapture:
         t = time.time()
         cx = int((w / 2) + (w / 4) * math.sin(t * 2))
         cy = int((h / 2) + (h / 5) * math.cos(t * 3))
-        
+
         # Grid lines
         for x in range(0, w, 80):
             draw.line([(x, 0), (x, h)], fill=(30, 41, 59), width=1)
@@ -288,7 +287,7 @@ class ScreenCapture:
 
         # Dynamic circle (moving target)
         draw.ellipse([cx - 25, cy - 25, cx + 25, cy + 25], fill=(99, 102, 241), outline=(129, 140, 248), width=3) # indigo-500
-        
+
         # Text details
         current_time = time.strftime("%H:%M:%S") + f".{int((t % 1) * 100):02d}"
         msg = f"VNC System (Mock Mode)\nTime: {current_time}\nMonitor ID: 1\nResolution: {w}x{h}"

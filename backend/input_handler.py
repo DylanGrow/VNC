@@ -51,16 +51,16 @@ class InputValidator:
             if event_type in ["mouse_move", "mouse_down", "mouse_up", "click", "double_click", "scroll"]:
                 x = data.get("x")
                 y = data.get("y")
-                
+
                 if x is None or y is None:
                     raise ValueError("Missing coordinates 'x' or 'y'")
-                
+
                 try:
                     x_val = float(x)
                     y_val = float(y)
                 except (ValueError, TypeError):
                     raise ValueError("Coordinates must be float values")
-                    
+
                 if not (0.0 <= x_val <= 1.0) or not (0.0 <= y_val <= 1.0):
                     raise ValueError("Relative coordinates must be within [0.0, 1.0]")
 
@@ -93,7 +93,7 @@ class InputValidator:
                 except Exception as e:
                     # Log but do not crash (fails gracefully in headless VM contexts)
                     logger.debug(f"Input action '{event_type}' simulated. Reason: {e}")
-                
+
                 return {"status": "success", "type": event_type, "x": abs_x, "y": abs_y}
 
             # ------------------ Keyboard Events ------------------
@@ -120,10 +120,9 @@ class InputValidator:
                     if "alt" in self.modifiers_held and key_lower in ["tab", "f4"]:
                         raise ValueError(f"Hotkey combination Alt+{key} is prohibited by security ACL policies.")
                     if "ctrl" in self.modifiers_held and key_lower == "escape":
-                        raise ValueError(f"Hotkey combination Ctrl+Escape is prohibited by security ACL policies.")
+                        raise ValueError("Hotkey combination Ctrl+Escape is prohibited by security ACL policies.")
                     if "win" in self.modifiers_held:
                         raise ValueError("Windows shortcut key combination is prohibited by security ACL policies.")
-                
                 # String length 1: Standard character code. Check ASCII printable range.
                 if len(key) == 1:
                     char_code = ord(key)
@@ -141,7 +140,7 @@ class InputValidator:
                         pyautogui.keyUp(key_lower)
                 except Exception as e:
                     logger.debug(f"Keyboard action '{event_type}' simulated. Reason: {e}")
-                    
+
                 return {"status": "success", "type": event_type, "key": key_lower}
 
             elif event_type == "key_combo":
@@ -156,10 +155,10 @@ class InputValidator:
                         raise ValueError("Keys must be strings")
                     key_lower = key.lower()
                     keys_lower.append(key_lower)
-                    
+
                     if key_lower in self.blacklisted_keys:
                         raise ValueError(f"Keystroke '{key}' is prohibited by security ACL policies.")
-                        
+
                     if len(key_lower) == 1:
                         char_code = ord(key_lower)
                         if not (32 <= char_code <= 126):
@@ -167,7 +166,6 @@ class InputValidator:
                     else:
                         if key_lower not in self.allowed_keys:
                             raise ValueError(f"Key '{key_lower}' is not present in security whitelist")
-                
                 # Security ACL combination checks
                 if "alt" in keys_lower and ("tab" in keys_lower or "f4" in keys_lower):
                     raise ValueError("Hotkey combination Alt+Tab/F4 is prohibited by security ACL policies.")
@@ -175,7 +173,6 @@ class InputValidator:
                     raise ValueError("Hotkey combination Ctrl+Escape is prohibited by security ACL policies.")
                 if "win" in keys_lower:
                     raise ValueError("Windows shortcut key combination is prohibited by security ACL policies.")
-                
                 try:
                     # Temporarily release any modifiers held down by the user to avoid input pollution
                     held_modifiers = list(self.modifiers_held)
@@ -195,7 +192,7 @@ class InputValidator:
                             pass
                 except Exception as e:
                     logger.debug(f"Keyboard hotkey combo failed to execute: {e}")
-                    
+
                 return {"status": "success", "type": "key_combo", "keys": keys}
 
             else:

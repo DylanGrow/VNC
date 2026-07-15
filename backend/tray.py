@@ -23,7 +23,7 @@ class SystemTrayApp:
         if sys.platform == "darwin":
             logger.warning("System tray applet is disabled on macOS because pystray requires the main thread GUI loop.")
             self.available = False
-            
+
         if not self.available and sys.platform != "darwin":
             logger.info("pystray library not found. System tray applet disabled.")
 
@@ -54,7 +54,7 @@ class SystemTrayApp:
                 return
             except Exception as e:
                 logger.debug(f"Exit callback failed: {e}")
-                
+
         import os
         import signal
         try:
@@ -68,7 +68,7 @@ class SystemTrayApp:
         """Launches the system tray applet on a separate daemon thread."""
         if not self.available:
             return
-            
+
         def setup_icon():
             try:
                 menu = pystray.Menu(

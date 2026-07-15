@@ -7,9 +7,10 @@ import threading
 logger = logging.getLogger(__name__)
 
 try:
-    import aiortc
+    import importlib.util
+    if importlib.util.find_spec("aiortc") is None or importlib.util.find_spec("av") is None:
+        raise ImportError()
     from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, AudioStreamTrack
-    import av
     from av import VideoFrame, AudioFrame
     webrtc_available = True
 except ImportError:
@@ -31,14 +32,14 @@ if webrtc_available:
 
         async def recv(self):
             pts, time_base = await self.next_timestamp()
-            
+
             # Execute PIL grab in worker thread to prevent blocking ASGI event loop
             pil_img = await asyncio.to_thread(
                 self.screen_capture.capture_pil,
                 self.monitor_id,
                 resolution=(1280, 720)
             )
-            
+
             if not pil_img:
                 # Yield a blank solid black fallback frame on capture error
                 frame = VideoFrame(width=1280, height=720, format="rgb24")
@@ -54,10 +55,10 @@ if webrtc_available:
                         plane.update(b"\x00" * plane.buffer_size)
                 finally:
                     pil_img.close()
-                    
+
             frame.pts = pts
             frame.time_base = time_base
-            
+
             await asyncio.sleep(self.target_delay)
             return frame
 
@@ -70,27 +71,27 @@ if webrtc_available:
 
         async def recv(self):
             pts, time_base = await self.next_timestamp()
-            
+
             # At 44100 Hz, 20ms corresponds to 882 samples (16-bit mono = 2 bytes/sample)
             num_samples = int(self.audio_capture.sample_rate * 0.020)
             required_bytes = num_samples * 2
-            
+
             # Check buffer length before fetching additional samples
             with self.buffer_lock:
                 current_len = len(self.buffer)
-                
+
             if current_len < required_bytes:
                 chunk = await asyncio.to_thread(self.audio_capture.read_chunk, 20)
                 if chunk:
                     with self.buffer_lock:
                         self.buffer.extend(chunk)
-            
+
             frame_data = None
             with self.buffer_lock:
                 if len(self.buffer) >= required_bytes:
                     frame_data = bytes(self.buffer[:required_bytes])
                     del self.buffer[:required_bytes]
-            
+
             if not frame_data:
                 # Yield mute silence frame
                 frame = AudioFrame(format="s16", layout="mono", samples=num_samples)
@@ -105,7 +106,7 @@ if webrtc_available:
                     frame = AudioFrame(format="s16", layout="mono", samples=num_samples)
                     for plane in frame.planes:
                         plane.update(b"\x00" * plane.buffer_size)
-                        
+
             frame.pts = pts
             frame.time_base = time_base
             return frame
@@ -153,7 +154,7 @@ class WebRTCSessionManager:
         """Handles incoming WebRTC offer and returns generated session description answer."""
         if not self.available:
             return {"status": "unsupported", "detail": "WebRTC is not available on this host."}
-            
+
         try:
             # Safely replace existing session peer connection if negotiated again
             old_pc = self.pcs.pop(conn_id, None)
@@ -164,28 +165,28 @@ class WebRTCSessionManager:
             self.pcs[conn_id] = pc
             # Store reference to clean up audio recorder on session termination
             pc.audio_capture = audio_capture
-            
+
             @pc.on("connectionstatechange")
             async def on_connectionstatechange():
                 logger.info(f"WebRTC Connection State for {conn_id}: {pc.connectionState}")
                 if pc.connectionState in ["failed", "closed"]:
                     self.pcs.pop(conn_id, None)
                     asyncio.create_task(self._close_pc(pc))
-            
+
             # Attach custom video and audio tracks
             video_track = ScreenVideoCaptureTrack(screen_capture, monitor_id=1)
             pc.addTrack(video_track)
-            
+
             audio_track = LoopbackAudioCaptureTrack(audio_capture)
             pc.addTrack(audio_track)
-                    
+
             offer = RTCSessionDescription(sdp=offer_sdp, type=offer_type)
             await pc.setRemoteDescription(offer)
-            
+
             # Generate local answer SDP
             answer = await pc.createAnswer()
             await pc.setLocalDescription(answer)
-            
+
             return {
                 "status": "success",
                 "sdp": pc.localDescription.sdp,
@@ -236,7 +237,7 @@ class WebRTCSessionManager:
                 except Exception:
                     pass
                 pc.audio_capture = None
-            
+
             for transceiver in list(pc.getTransceivers()):
                 try:
                     transceiver.stop()

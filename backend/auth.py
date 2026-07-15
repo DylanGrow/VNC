@@ -29,7 +29,7 @@ def prune_expired_auth_records():
         for ip in expired_bans:
             BANNED_IPS.pop(ip, None)
             FAILED_ATTEMPTS.pop(ip, None)
-            
+
         for ip, attempts in list(FAILED_ATTEMPTS.items()):
             valid_attempts = [t for t in attempts if now - t < timedelta(minutes=10)]
             if not valid_attempts:
@@ -42,7 +42,7 @@ def prune_expired_auth_records():
             sorted_bans = sorted(BANNED_IPS.items(), key=lambda x: x[1])
             for ip, _ in sorted_bans[:len(BANNED_IPS) - 10000]:
                 BANNED_IPS.pop(ip, None)
-                
+
         if len(FAILED_ATTEMPTS) > 10000:
             excess = len(FAILED_ATTEMPTS) - 10000
             for ip in list(FAILED_ATTEMPTS.keys())[:excess]:
@@ -55,7 +55,7 @@ def track_failed_attempt(ip: str):
         now = datetime.now(timezone.utc)
         FAILED_ATTEMPTS[ip].append(now)
         FAILED_ATTEMPTS[ip] = [t for t in FAILED_ATTEMPTS[ip] if now - t < timedelta(minutes=10)]
-        
+
         if len(FAILED_ATTEMPTS[ip]) >= 5:
             BANNED_IPS[ip] = now + timedelta(minutes=30)
             logger.warning(f"IP {ip} banned for 30 minutes due to 5 consecutive auth failures.")
@@ -130,7 +130,7 @@ def verify_token_string(token: str) -> TokenData:
         username: str = payload.get("sub")
         if username is None:
             raise HTTPException(status_code=401, detail="Invalid token payload")
-        
+
         role: str = payload.get("role", "operator")
         csrf_token: str = payload.get("csrf_token", "")
         return TokenData(
@@ -157,15 +157,15 @@ def verify_token(request: Request, credentials: Optional[HTTPAuthorizationCreden
     token = request.cookies.get("access_token")
     if not token and credentials:
         token = credentials.credentials
-        
+
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session authorization credentials missing"
         )
-    
+
     token_data = verify_token_string(token)
-    
+
     # CSRF Token validation for write methods
     if request.method in ["POST", "PUT", "DELETE"]:
         # Exempt /auth/refresh and /auth/logout from CSRF checks to allow session auto-recovery and logout cleanups
@@ -177,5 +177,5 @@ def verify_token(request: Request, credentials: Optional[HTTPAuthorizationCreden
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="CSRF token validation failed"
                 )
-            
+
     return token_data

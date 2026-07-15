@@ -19,7 +19,7 @@ class VideoEncoder:
         self.container = None
         self.stream = None
         self.output_buffer = None
-        
+
         if not self.available:
             logger.info("PyAV (av) library not found. H.264 video stream encoding disabled (falling back to JPEG tiles).")
 
@@ -27,10 +27,10 @@ class VideoEncoder:
         """Encodes a PIL Image to H.264 video frame bytes if PyAV is available."""
         if not self.available:
             return None
-            
+
         try:
             import io
-            
+
             # Handle dynamic resolution changes on the fly
             if pil_image.width != self.width or pil_image.height != self.height:
                 logger.info(f"H.264 Encoder: Resolution change detected ({self.width}x{self.height} -> {pil_image.width}x{pil_image.height}). Reinitializing container.")
@@ -55,15 +55,15 @@ class VideoEncoder:
             # Map PIL Image directly into a PyAV VideoFrame
             frame = av.VideoFrame.from_image(pil_image)
             frame.pts = None
-            
+
             for packet in self.stream.encode(frame):
                 self.container.mux(packet)
-                
+
             self.output_buffer.seek(0)
             data = self.output_buffer.read()
             self.output_buffer.seek(0)
             self.output_buffer.truncate(0)
-            
+
             return data if data else None
         except Exception as e:
             logger.debug(f"Failed to encode screen frame to video H.264: {e}")

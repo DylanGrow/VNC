@@ -22,7 +22,6 @@ from input_handler import InputValidator
 from metrics import MetricsCollector
 from clipboard import ClipboardManager
 from audit import AuditLogger
-from video_encoder import VideoEncoder
 from audio import AudioCapture
 from tray import SystemTrayApp
 from webrtc import WebRTCSessionManager

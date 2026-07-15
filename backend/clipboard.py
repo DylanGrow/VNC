@@ -29,7 +29,7 @@ def auto_configure_x11():
                     detected = f":{min(displays)}"
                     os.environ["DISPLAY"] = detected
                     logger.info(f"Linux/X11: Auto-detected and configured DISPLAY={detected}")
-        
+
         if "XAUTHORITY" not in os.environ:
             home = os.path.expanduser("~")
             xauth_path = os.path.join(home, ".Xauthority")
@@ -42,10 +42,10 @@ class ClipboardManager:
         self.max_length = max_length
         self.mock_clipboard = ""
         self.available = pyperclip_available
-        
+
         # Enforce X11 configuration check on Linux
         auto_configure_x11()
-        
+
         if not self.available:
             logger.warning("pyperclip library not found. Falling back to in-memory clipboard emulation.")
 
@@ -53,7 +53,7 @@ class ClipboardManager:
         """Fetch text from system clipboard with fallback to in-memory store."""
         if not self.available:
             return self.mock_clipboard
-            
+
         try:
             text = pyperclip.paste()
             if not text:
@@ -71,7 +71,7 @@ class ClipboardManager:
         # Sanitize string: retain only printables, tabs, newlines, and carriage returns
         raw_str = str(text) if text is not None else ""
         text_str = "".join(ch for ch in raw_str if ch.isprintable() or ch in "\n\r\t")
-        
+
         if len(text_str) > self.max_length:
             logger.warning(f"Clipboard update length ({len(text_str)}) exceeds maximum allowed size. Truncating.")
             text_str = text_str[:self.max_length]
