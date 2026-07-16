@@ -62,17 +62,19 @@ echo.
 echo   [1] Run VNC Server Locally (Fastest, uses Python + Pre-built Web Console)
 echo   [2] Run VNC Server in Docker (Production Mode with Nginx Reverse Proxy)
 echo   [3] Build/Recompile Web Frontend Assets (Vite + TypeScript)
-echo   [4] View Server Connection Info (Password & URL)
-echo   [5] Exit Control Panel
+echo   [4] Compile into Standalone Windows .exe (No Python installation required)
+echo   [5] View Server Connection Info (Password & URL)
+echo   [6] Exit Control Panel
 echo.
-set /p "choice=Enter option [1-5]: "
+set /p "choice=Enter option [1-6]: "
 
 if "%choice%"=="1" goto run_local
 if "%choice%"=="2" goto run_docker
 if "%choice%"=="3" goto build_frontend
-if "%choice%"=="4" goto view_info
-if "%choice%"=="5" exit /b 0
-echo %RED%Invalid option. Please choose between 1 and 5.%RESET%
+if "%choice%"=="4" goto compile_exe
+if "%choice%"=="5" goto view_info
+if "%choice%"=="6" exit /b 0
+echo %RED%Invalid option. Please choose between 1 and 6.%RESET%
 echo.
 goto menu
 
@@ -137,5 +139,12 @@ echo   Local Address:      http://localhost:%VNC_PORT%
 echo   Secure Password:    %GREEN%%VNC_PASS%%RESET%
 echo   Environment Mode:   development
 echo %BLUE%================================================================%RESET%
+echo.
+goto menu
+
+:compile_exe
+echo.
+echo %YELLOW%Compiling FastAPI backend into a standalone vnc_server.exe...%RESET%
+python build_exe.py
 echo.
 goto menu

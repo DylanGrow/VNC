@@ -1094,7 +1094,12 @@ async def health_check():
     }
 
 # ------------------ Static Frontend Hosting & Fallbacks ------------------
-dist_path = os.getenv("FRONTEND_DIST_PATH", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")))
+import sys
+if getattr(sys, "frozen", False):
+    # PyInstaller extracts resources to sys._MEIPASS at runtime
+    dist_path = os.path.join(sys._MEIPASS, "frontend", "dist")
+else:
+    dist_path = os.getenv("FRONTEND_DIST_PATH", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")))
 assets_path = os.path.join(dist_path, "assets")
 
 if os.path.isdir(assets_path):
