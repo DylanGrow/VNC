@@ -10,6 +10,7 @@ import asyncio
 from datetime import datetime, timezone
 import uuid
 import os
+import sys
 import secrets
 import time
 import signal
@@ -1094,7 +1095,6 @@ async def health_check():
     }
 
 # ------------------ Static Frontend Hosting & Fallbacks ------------------
-import sys
 if getattr(sys, "frozen", False):
     # PyInstaller extracts resources to sys._MEIPASS at runtime
     dist_path = os.path.join(sys._MEIPASS, "frontend", "dist")
