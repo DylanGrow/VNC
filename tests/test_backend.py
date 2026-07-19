@@ -1,7 +1,11 @@
 import unittest
-from unittest.mock import patch
-import os
 import sys
+from unittest.mock import MagicMock
+import os
+
+# Mock pyautogui to bypass headless/DISPLAY import errors on Linux GHA runners
+mock_pyautogui = MagicMock()
+sys.modules["pyautogui"] = mock_pyautogui
 
 # Ensure backend folder is in Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend")))
@@ -64,12 +68,12 @@ class TestRateLimiter(unittest.TestCase):
         cm.remove_connection("1.1.1.1", "conn_1")
         self.assertTrue(cm.add_connection("3.3.3.3", "conn_5"))
 
-@patch("input_handler.pyautogui")
 class TestInputValidation(unittest.TestCase):
     def setUp(self):
         self.validator = InputValidator()
+        mock_pyautogui.reset_mock()
 
-    def test_mouse_coordinate_clamping(self, mock_pyautogui):
+    def test_mouse_coordinate_clamping(self):
         # Valid relative input inside screen bounds [0.0, 1.0]
         valid_move = {"type": "mouse_move", "x": 0.5, "y": 0.5}
         result = self.validator.validate_and_execute(valid_move, 1920, 1080)
@@ -81,7 +85,7 @@ class TestInputValidation(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.validator.validate_and_execute(invalid_move, 1920, 1080)
 
-    def test_prohibited_key_rejection(self, mock_pyautogui):
+    def test_prohibited_key_rejection(self):
         # Standard key input should pass and call write/press
         valid_key = {"type": "key_press", "key": "a"}
         result = self.validator.validate_and_execute(valid_key, 1920, 1080)
