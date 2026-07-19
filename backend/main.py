@@ -47,17 +47,17 @@ def load_env_file() -> None:
 # Load environment before any other project modules (like auth.py) are imported
 load_env_file()
 
-import ipaddress
-from auth import issue_token, verify_token, verify_token_string, TokenData, track_failed_attempt, is_ip_banned, clear_failed_attempts
-from rate_limit import ConnectionManager
-from screen_capture import ScreenCapture
-from input_handler import InputValidator
-from metrics import MetricsCollector
-from clipboard import ClipboardManager
-from audit import AuditLogger
-from audio import AudioCapture
-from tray import SystemTrayApp
-from webrtc import WebRTCSessionManager
+import ipaddress  # noqa: E402
+from auth import issue_token, verify_token, verify_token_string, TokenData, track_failed_attempt, is_ip_banned, clear_failed_attempts  # noqa: E402
+from rate_limit import ConnectionManager  # noqa: E402
+from screen_capture import ScreenCapture  # noqa: E402
+from input_handler import InputValidator  # noqa: E402
+from metrics import MetricsCollector  # noqa: E402
+from clipboard import ClipboardManager  # noqa: E402
+from audit import AuditLogger  # noqa: E402
+from audio import AudioCapture  # noqa: E402
+from tray import SystemTrayApp  # noqa: E402
+from webrtc import WebRTCSessionManager  # noqa: E402
 
 # Logging setup
 logging.basicConfig(
