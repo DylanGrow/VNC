@@ -900,6 +900,21 @@ async def execute_terminal_command(
     try:
         # C5 FIX: Use exec (not shell) to prevent shell injection
         args = command.split()
+
+        # Wrap Windows shell built-ins to execute via cmd.exe /c
+        if sys.platform == "win32" and args:
+            cmd_mapping = {
+                "dir": ["cmd.exe", "/c", "dir"],
+                "ls": ["cmd.exe", "/c", "dir"],
+                "echo": ["cmd.exe", "/c", "echo"],
+                "type": ["cmd.exe", "/c", "type"],
+                "ver": ["cmd.exe", "/c", "ver"],
+                "pwd": ["cmd.exe", "/c", "cd"],
+            }
+            first_cmd = args[0].lower()
+            if first_cmd in cmd_mapping:
+                args = cmd_mapping[first_cmd] + args[1:]
+
         proc = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
