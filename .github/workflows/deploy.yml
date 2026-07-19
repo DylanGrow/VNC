@@ -36,6 +36,9 @@ jobs:
         run: pip-audit -r backend/requirements.txt --skip-editable
         continue-on-error: true
 
+      - name: Run Backend Unit Tests
+        run: python -m unittest tests/test_backend.py
+
   verify-frontend:
     runs-on: ubuntu-latest
     steps:
