@@ -15,6 +15,35 @@ import secrets
 import time
 import signal
 
+def load_env_file() -> None:
+    """Parses a local .env file and updates os.environ if key is missing."""
+    possible_paths = [
+        ".env",
+        "backend/.env",
+        "../.env",
+        os.path.join(os.path.dirname(__file__), ".env"),
+        os.path.join(os.path.dirname(__file__), "..", ".env"),
+    ]
+    for path in possible_paths:
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#") or "=" not in line:
+                            continue
+                        key, val = line.split("=", 1)
+                        key = key.strip()
+                        val = val.strip().strip("'\"")
+                        if key and key not in os.environ:
+                            os.environ[key] = val
+                break
+            except Exception:
+                pass
+
+# Load environment before any other project modules (like auth.py) are imported
+load_env_file()
+
 import ipaddress
 from auth import issue_token, verify_token, verify_token_string, TokenData, track_failed_attempt, is_ip_banned, clear_failed_attempts
 from rate_limit import ConnectionManager
