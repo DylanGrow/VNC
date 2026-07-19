@@ -63,18 +63,20 @@ echo   [1] Run VNC Server Locally (Fastest, uses Python + Pre-built Web Console)
 echo   [2] Run VNC Server in Docker (Production Mode with Nginx Reverse Proxy)
 echo   [3] Build/Recompile Web Frontend Assets (Vite + TypeScript)
 echo   [4] Compile into Standalone Windows .exe (No Python installation required)
-echo   [5] View Server Connection Info (Password & URL)
-echo   [6] Exit Control Panel
+echo   [5] Build Android Companion App (Gradle/Kotlin, requires Java JDK)
+echo   [6] View Server Connection Info (Password & URL)
+echo   [7] Exit Control Panel
 echo.
-set /p "choice=Enter option [1-6]: "
+set /p "choice=Enter option [1-7]: "
 
 if "%choice%"=="1" goto run_local
 if "%choice%"=="2" goto run_docker
 if "%choice%"=="3" goto build_frontend
 if "%choice%"=="4" goto compile_exe
-if "%choice%"=="5" goto view_info
-if "%choice%"=="6" exit /b 0
-echo %RED%Invalid option. Please choose between 1 and 6.%RESET%
+if "%choice%"=="5" goto build_android
+if "%choice%"=="6" goto view_info
+if "%choice%"=="7" exit /b 0
+echo %RED%Invalid option. Please choose between 1 and 7.%RESET%
 echo.
 goto menu
 
@@ -146,5 +148,26 @@ goto menu
 echo.
 echo %YELLOW%Compiling FastAPI backend into a standalone vnc_server.exe...%RESET%
 python build_exe.py
+echo.
+goto menu
+
+:build_android
+echo.
+echo %YELLOW%Building Android Companion App (Gradle)...%RESET%
+if not exist "android\gradlew" (
+    echo %RED%Error: Gradle wrapper not found in android directory.%RESET%
+    goto menu
+)
+cd android
+call gradlew.bat assembleDebug --no-daemon
+if %errorlevel% neq 0 (
+    echo %RED%Android build failed. Please make sure Android SDK and Java JDK are configured.%RESET%
+    cd ..
+    goto menu
+)
+cd ..
+echo.
+echo %GREEN%Android Debug APK built successfully!%RESET%
+echo Location: android\app\build\outputs\apk\debug\app-debug.apk
 echo.
 goto menu
