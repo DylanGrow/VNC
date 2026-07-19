@@ -17,12 +17,14 @@ logger = logging.getLogger(__name__)
 FAILED_ATTEMPTS: Dict[str, List[datetime]] = defaultdict(list)
 # IP -> ban expiration datetime
 BANNED_IPS: Dict[str, datetime] = {}
+# jti -> exp_datetime for blacklisted (logged out) tokens
+TOKEN_BLACKLIST: Dict[str, datetime] = {}
 
 # Reentrant lock to prevent multi-threaded dictionary state mutation crashes
 AUTH_LOCK = threading.RLock()
 
 def prune_expired_auth_records():
-    """Prunes expired ban and failed attempt records to prevent memory growth leaks."""
+    """Prunes expired ban, failed attempt, and token blacklist records to prevent memory growth leaks."""
     with AUTH_LOCK:
         now = datetime.now(timezone.utc)
         expired_bans = [ip for ip, exp in BANNED_IPS.items() if now > exp]
@@ -36,6 +38,10 @@ def prune_expired_auth_records():
                 FAILED_ATTEMPTS.pop(ip, None)
             else:
                 FAILED_ATTEMPTS[ip] = valid_attempts
+
+        expired_blacklists = [jti for jti, exp in TOKEN_BLACKLIST.items() if now > exp]
+        for jti in expired_blacklists:
+            TOKEN_BLACKLIST.pop(jti, None)
 
         # Enforce hard upper boundaries to prevent memory DoS
         if len(BANNED_IPS) > 10000:
@@ -77,6 +83,22 @@ def clear_failed_attempts(ip: str):
     """Wipes failed attempt tracker for the given IP address."""
     with AUTH_LOCK:
         FAILED_ATTEMPTS.pop(ip, None)
+
+def blacklist_token(jti: str, exp: datetime) -> None:
+    """Explicitly adds a JWT unique identifier (jti) to the revocation blacklist."""
+    with AUTH_LOCK:
+        TOKEN_BLACKLIST[jti] = exp
+
+def is_token_blacklisted(jti: str) -> bool:
+    """Checks if a token JTI has been revoked, automatically pruning it if it has naturally expired."""
+    with AUTH_LOCK:
+        if jti not in TOKEN_BLACKLIST:
+            return False
+        now = datetime.now(timezone.utc)
+        if now > TOKEN_BLACKLIST[jti]:
+            TOKEN_BLACKLIST.pop(jti, None)
+            return False
+        return True
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
@@ -127,6 +149,9 @@ def verify_token_string(token: str) -> TokenData:
     """Verify raw token string directly"""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        jti = payload.get("jti", "")
+        if jti and is_token_blacklisted(jti):
+            raise HTTPException(status_code=401, detail="Token has been revoked/logged out")
         username: str = payload.get("sub")
         if username is None:
             raise HTTPException(status_code=401, detail="Invalid token payload")

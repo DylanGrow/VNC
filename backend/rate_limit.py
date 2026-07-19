@@ -65,3 +65,14 @@ class ConnectionManager:
             return process.memory_info().rss / (1024 * 1024)
         except Exception:
             return 0.0
+
+    def cleanup_stale_connections(self, active_conn_ids: set) -> None:
+        """Purges any registered connections that are not present in the active websocket ID set."""
+        with self.lock:
+            for client_ip, conns in list(self.active_connections.items()):
+                stale = [c for c in conns if c not in active_conn_ids]
+                for c in stale:
+                    conns.discard(c)
+                    logger.info(f"Cleanup: Pruned stale connection {c} from IP {client_ip}")
+                if not conns:
+                    del self.active_connections[client_ip]

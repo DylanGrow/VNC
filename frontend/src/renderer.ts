@@ -203,4 +203,23 @@ export class CanvasRenderer {
     
     ctx.restore();
   }
+
+  /**
+   * Cleans up pooled Image instances, clears src reference pointers to free browser RAM,
+   * resets callback listeners, and detaches canvas contexts for safe garbage collection.
+   */
+  public destroy() {
+    this.clear();
+    for (const img of this.imagePool) {
+      img.onload = null;
+      img.onerror = null;
+      img.src = '';
+    }
+    this.imagePool = [];
+    
+    (this.ctx as any) = null;
+    (this.offscreenCtx as any) = null;
+    (this.canvas as any) = null;
+    (this.offscreenCanvas as any) = null;
+  }
 }

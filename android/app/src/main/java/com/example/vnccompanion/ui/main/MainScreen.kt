@@ -56,6 +56,41 @@ fun MainScreen(
   val keyboard = LocalSoftwareKeyboardController.current
   val coroutineScope = rememberCoroutineScope()
 
+  val isOnline = remember { mutableStateOf(true) }
+
+  DisposableEffect(context) {
+    val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+    val activeNetwork = connectivityManager.activeNetwork
+    val networkCapabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+    isOnline.value = networkCapabilities?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+
+    val networkCallback = object : android.net.ConnectivityManager.NetworkCallback() {
+      override fun onAvailable(network: android.net.Network) {
+        isOnline.value = true
+      }
+
+      override fun onLost(network: android.net.Network) {
+        val active = connectivityManager.activeNetwork
+        val caps = connectivityManager.getNetworkCapabilities(active)
+        isOnline.value = caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+      }
+    }
+
+    val request = android.net.NetworkRequest.Builder()
+      .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+      .build()
+    
+    connectivityManager.registerNetworkCallback(request, networkCallback)
+
+    onDispose {
+      try {
+        connectivityManager.unregisterNetworkCallback(networkCallback)
+      } catch (e: Exception) {
+        e.printStackTrace()
+      }
+    }
+  }
+
   // Initialise ViewModel with context once
   LaunchedEffect(Unit) { vm.init(context) }
 
@@ -134,6 +169,23 @@ fun MainScreen(
       .padding(horizontal = 24.dp),
     horizontalAlignment = Alignment.CenterHorizontally
   ) {
+    if (!isOnline.value) {
+      Spacer(modifier = Modifier.height(16.dp))
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .clip(RoundedCornerShape(8.dp))
+          .background(Rose600.copy(alpha = 0.9f))
+          .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center
+      ) {
+        Icon(Icons.Default.Wifi, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+        Text("No Internet Connection", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+      }
+    }
+
     Spacer(modifier = Modifier.height(48.dp))
 
     // Logo with settings gear in top-right corner

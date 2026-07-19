@@ -13,6 +13,10 @@ export class Reconnector {
     this.jitter = jitter;
   }
 
+  public get isReconnecting(): boolean {
+    return this.timerId !== null;
+  }
+
   /**
    * Schedule a reconnection callback with calculated exponential delay and randomized jitter.
    */

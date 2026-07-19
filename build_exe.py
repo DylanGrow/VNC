@@ -100,7 +100,7 @@ exe = EXE(
 
     # 4. Run PyInstaller
     print("Compiling standalone executable via PyInstaller...")
-    run_command("pyinstaller --clean vnc_server.spec")
+    run_command("python -m PyInstaller --clean vnc_server.spec")
 
     print("\n=======================================================")
     print("  Compilation Successful!")

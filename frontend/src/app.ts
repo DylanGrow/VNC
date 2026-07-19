@@ -64,13 +64,13 @@ export class ScreenShareApp {
     this.svgAudioOff = document.getElementById('svg-audio-off') as HTMLElement;
     this.txtAudio = document.getElementById('txt-audio') as HTMLElement;
 
-    // Register Event Hooks
-    this.formAuth.addEventListener('submit', (e) => this.handleLogin(e));
-    this.btnLogout.addEventListener('click', () => this.handleLogout());
-    this.selectMonitor.addEventListener('change', () => this.handleMonitorChange());
-    this.sliderQuality.addEventListener('input', () => this.handleQualityChangeDebounced());
-    this.btnFullscreen.addEventListener('click', () => this.toggleFullscreen());
-    this.btnAudioToggle.addEventListener('click', () => this.toggleAudio());
+    // Register Event Hooks defensively
+    this.formAuth?.addEventListener('submit', (e) => this.handleLogin(e));
+    this.btnLogout?.addEventListener('click', () => this.handleLogout());
+    this.selectMonitor?.addEventListener('change', () => this.handleMonitorChange());
+    this.sliderQuality?.addEventListener('input', () => this.handleQualityChangeDebounced());
+    this.btnFullscreen?.addEventListener('click', () => this.toggleFullscreen());
+    this.btnAudioToggle?.addEventListener('click', () => this.toggleAudio());
 
     // Virtual keyboard combos
     document.getElementById('btn-key-ctrlaltdel')?.addEventListener('click', () => this.sendKeyCombo(['ctrl', 'alt', 'delete']));

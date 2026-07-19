@@ -48,7 +48,7 @@ def load_env_file() -> None:
 load_env_file()
 
 import ipaddress  # noqa: E402
-from auth import issue_token, verify_token, verify_token_string, TokenData, track_failed_attempt, is_ip_banned, clear_failed_attempts  # noqa: E402
+from auth import issue_token, verify_token, verify_token_string, TokenData, track_failed_attempt, is_ip_banned, clear_failed_attempts, blacklist_token  # noqa: E402
 from rate_limit import ConnectionManager  # noqa: E402
 from screen_capture import ScreenCapture  # noqa: E402
 from input_handler import InputValidator  # noqa: E402
@@ -233,7 +233,27 @@ async def lifespan(app: FastAPI):
     )
     SYSTEM_TRAY.run()
 
+    # Start stale connections cleanup loop in the background
+    async def cleanup_stale_connections_loop():
+        while True:
+            try:
+                await asyncio.sleep(60.0)
+                active_ids = set(ACTIVE_WEBSOCKETS.keys())
+                connection_manager.cleanup_stale_connections(active_ids)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in stale connection cleanup loop: {e}")
+
+    cleanup_task = asyncio.create_task(cleanup_stale_connections_loop())
+
     yield
+
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
 
     # Shutdown logic
     if SYSTEM_TRAY and SYSTEM_TRAY.icon:
@@ -324,6 +344,23 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-CSRF-Token", "Authorization"],
 )
 
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' https://fonts.googleapis.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; "
+        "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self' ws: wss:; "
+        "media-src 'self' blob:;"
+    )
+    return response
+
 class ApiPathRewriteMiddleware:
     """Middleware to strip the /api prefix from incoming paths for API and WebSocket routing compatibility."""
     def __init__(self, app):
@@ -390,6 +427,7 @@ async def login(credentials: dict, request: Request):
 @app.post("/auth/logout")
 async def logout(request: Request, current_user: TokenData = Depends(verify_token)):
     """Wipes the session cookie and signs out the user."""
+    blacklist_token(current_user.jti, current_user.exp)
     client_ip = request.client.host if request.client else "unknown"
     await audit_logger.log_event("logout", {"username": current_user.sub, "ip": client_ip})
     response = JSONResponse(content={"status": "success"})
@@ -1008,6 +1046,15 @@ async def upload_file_to_host(
 
     dest_dir = get_downloads_dir()
     dest_path = dest_dir / filename
+
+    # Prevent path traversal breakouts by verifying resolved path remains inside dest_dir
+    try:
+        resolved_dest = dest_path.resolve()
+        resolved_dir = dest_dir.resolve()
+        if not str(resolved_dest).startswith(str(resolved_dir)):
+            raise ValueError()
+    except (ValueError, OSError):
+        raise HTTPException(status_code=400, detail="Filename violates path traversal constraints.")
 
     client_ip = request.client.host if request and request.client else "unknown"
     await audit_logger.log_event("file_upload_start", {

@@ -6,6 +6,8 @@ import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.net.http.SslError
+import android.webkit.SslErrorHandler
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -29,6 +31,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.vnccompanion.theme.*
 
+data class SslErrorDialogData(
+  val handler: SslErrorHandler,
+  val url: String
+)
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun ConsoleScreen(
@@ -41,6 +48,7 @@ fun ConsoleScreen(
   var isLoading by remember { mutableStateOf(true) }
   var touchpadMode by remember { mutableStateOf(false) }
   var showRow2 by remember { mutableStateOf(false) }
+  var sslErrorDialogState by remember { mutableStateOf<SslErrorDialogData?>(null) }
 
   // Keep screen on during active VNC sessions
   val context = LocalContext.current
@@ -98,6 +106,15 @@ fun ConsoleScreen(
                 override fun onPageFinished(view: WebView?, url: String?) {
                   super.onPageFinished(view, url)
                   isLoading = false
+                }
+                override fun onReceivedSslError(
+                  view: WebView?,
+                  handler: SslErrorHandler?,
+                  error: SslError?
+                ) {
+                  if (handler != null) {
+                    sslErrorDialogState = SslErrorDialogData(handler, error?.url ?: "")
+                  }
                 }
               }
 
@@ -240,6 +257,40 @@ fun ConsoleScreen(
         }
       }
     }
+  }
+
+  if (sslErrorDialogState != null) {
+    AlertDialog(
+      onDismissRequest = {
+        sslErrorDialogState?.handler?.cancel()
+        sslErrorDialogState = null
+      },
+      title = { Text(text = "Security Warning", color = Color.White) },
+      text = {
+        Text(
+          text = "The connection to the VNC Server has an SSL certificate error. Would you like to proceed anyway? (Use for local testing with self-signed certs)",
+          color = Color.LightGray
+        )
+      },
+      confirmButton = {
+        TextButton(onClick = {
+          sslErrorDialogState?.handler?.proceed()
+          sslErrorDialogState = null
+        }) {
+          Text("Proceed", color = Sky500)
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = {
+          sslErrorDialogState?.handler?.cancel()
+          sslErrorDialogState = null
+        }) {
+          Text("Cancel", color = Color.Gray)
+        }
+      },
+      containerColor = Slate900,
+      textContentColor = Color.White
+    )
   }
 }
 
