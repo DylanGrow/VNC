@@ -12,8 +12,13 @@ logger = logging.getLogger(__name__)
 
 class AuditLogger:
     def __init__(self):
-        # Place logs in backend/logs folder
-        self.log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+        # Place logs in backend/logs folder, or next to exe if running as frozen executable
+        import sys
+        if getattr(sys, "frozen", False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.log_dir = os.path.join(base_dir, "logs")
         os.makedirs(self.log_dir, exist_ok=True)
         self.log_path = os.path.join(self.log_dir, "audit.log")
         self._lock = threading.Lock()

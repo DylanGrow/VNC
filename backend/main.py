@@ -21,9 +21,12 @@ def load_env_file() -> None:
         ".env",
         "backend/.env",
         "../.env",
-        os.path.join(os.path.dirname(__file__), ".env"),
-        os.path.join(os.path.dirname(__file__), "..", ".env"),
     ]
+    if getattr(sys, "frozen", False):
+        possible_paths.append(os.path.join(os.path.dirname(sys.executable), ".env"))
+    else:
+        possible_paths.append(os.path.join(os.path.dirname(__file__), ".env"))
+        possible_paths.append(os.path.join(os.path.dirname(__file__), "..", ".env"))
     for path in possible_paths:
         if os.path.isfile(path):
             try:
@@ -1216,7 +1219,11 @@ def generate_self_signed_certs() -> tuple[str, str]:
         critical=False,
     ).sign(key, hashes.SHA256())
 
-    certs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "certs")
+    if getattr(sys, "frozen", False):
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+    certs_dir = os.path.join(base_dir, "certs")
     os.makedirs(certs_dir, exist_ok=True)
     key_path = os.path.join(certs_dir, "key.pem")
     cert_path = os.path.join(certs_dir, "cert.pem")
