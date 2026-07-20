@@ -111,10 +111,11 @@ if not SECRET_KEY:
         )
         sys.exit(1)
     else:
-        SECRET_KEY = secrets.token_hex(32)
+        import hashlib
+        SECRET_KEY = hashlib.sha256(f"VNC_STABLE_DEV_SECRET_{os.path.abspath(__file__)}".encode()).hexdigest()
         logger.warning(
-            "SECRET_KEY not set — generated a transient signing key. "
-            "All tokens will be invalidated on restart. Set SECRET_KEY in production."
+            "SECRET_KEY not explicitly set in .env — using a stable local development key. "
+            "Set SECRET_KEY in production."
         )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))

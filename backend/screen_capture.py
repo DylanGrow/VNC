@@ -27,10 +27,12 @@ class ScreenCapture:
 
     def _get_sct(self) -> Optional[mss.mss]:
         """Returns the active mss connection, attempting to restore it if closed or broken."""
-        if self.headless:
-            return None
         with self.lock:
             if self.sct is None:
+                now = time.time()
+                if hasattr(self, '_last_retry') and now - self._last_retry < 1.0:
+                    return None
+                self._last_retry = now
                 try:
                     self.sct = mss.mss()
                     # Verify handle validity by querying monitors
@@ -39,7 +41,6 @@ class ScreenCapture:
                 except Exception as e:
                     logger.warning(f"Failed to initialize mss connection handle: {e}")
                     self.sct = None
-                    # Fallback to headless only if it consistently fails
                     self.headless = True
             return self.sct
 

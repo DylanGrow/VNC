@@ -16,17 +16,15 @@ import time
 import signal
 
 def load_env_file() -> None:
-    """Parses a local .env file and updates os.environ if key is missing."""
-    possible_paths = [
-        ".env",
-        "backend/.env",
-        "../.env",
-    ]
+    """Parses local .env files and populates os.environ for any missing variables."""
+    possible_paths = []
     if getattr(sys, "frozen", False):
         possible_paths.append(os.path.join(os.path.dirname(sys.executable), ".env"))
     else:
         possible_paths.append(os.path.join(os.path.dirname(__file__), ".env"))
         possible_paths.append(os.path.join(os.path.dirname(__file__), "..", ".env"))
+    possible_paths.extend([".env", "backend/.env", "../.env"])
+
     for path in possible_paths:
         if os.path.isfile(path):
             try:
@@ -40,7 +38,6 @@ def load_env_file() -> None:
                         val = val.strip().strip("'\"")
                         if key and key not in os.environ:
                             os.environ[key] = val
-                break
             except Exception:
                 pass
 
@@ -1284,7 +1281,7 @@ if __name__ == "__main__":
         ssl_key_file, ssl_cert_file = generate_self_signed_certs()
 
     uvicorn.run(
-        "main:app",
+        app,
         host=os.getenv("HOST", "0.0.0.0"),
         port=int(os.getenv("PORT", "8000")),
         ssl_keyfile=ssl_key_file,

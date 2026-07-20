@@ -7,8 +7,8 @@ import pyautogui
 logger = logging.getLogger(__name__)
 
 # Configure PyAutoGUI safety parameters
-pyautogui.FAILSAFE = True  # Move mouse to any corner to abort execution
-pyautogui.PAUSE = 0.0      # Minimize execution latency
+pyautogui.FAILSAFE = False  # Disable corner failsafe so VNC mouse moves to (0,0) do not throw exceptions
+pyautogui.PAUSE = 0.0        # Minimize execution latency
 
 class InputValidator:
     def __init__(self):
